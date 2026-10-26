@@ -45,7 +45,7 @@ I originally made these changes for my own setup, but decided to share them in c
 To confirm it's working, open `logs\AgDrag.log` in the game folder. It should contain lines like:
 
 ```
-[Minimap] Map height patch applied (5 of 8 sites, ...)
+[Minimap] Map height patch applied (5 of 8 sites)
 [Minimap] uGUIMap vtable[55] = 00685130, hook create status: 0
 ```
 
@@ -70,21 +70,17 @@ Stereo=TRUE
 | `[AgDrag.Render]` | `AspectCorrection` | `true` | Enables HUD/menu aspect ratio correction. |
 | | `CenterUI` | `true` | Centers the HUD in a 16:9 area. |
 | | `HookMap` | `true` | Detects when the full map is open (required for the map fix). |
-| | `MapMode` | `1` | `1` = map fills the centered 16:9 area, mouse aligned (recommended). `0` = native full-width 32:9 map, but mouse/waypoints misaligned. `2` = experimental. |
+| | `MapMode` | `1` | `1` = map fills the centered 16:9 area, mouse aligned (recommended). `0` = native full-width 32:9 map, but mouse/waypoints misaligned. |
 | | `MapHeightPatch` | `true` | Makes the full map use a 16:9 layout so it fills the whole centered area (used by `MapMode=1`). |
-| | `FixDOF` | `true` | Original AgDrag depth-of-field correction (limited effect; see *Known limitations*). |
 | | `ForegroundFPS` / `BackgroundFPS` | | **No longer functional**, use Special K's frame limiter instead. |
 | `[AgDrag.Nametags]` | `AspectCorrect` | `true` | Prevents nametags/markers from being stretched. |
 | | `ShiftCoeff` | `0.0` | Horizontal nametag offset; `0` = automatic. |
-| `[AgDrag.Trace]` | `Minimap` / `UI` | `false` | Diagnostic logging, used with `Ctrl+Shift+Alt+L`. |
 
 ## Hotkeys
 
 | Keys | Action |
 |---|---|
 | `Ctrl+Shift+Alt+A` | Toggle aspect ratio correction |
-| `Ctrl+Shift+Alt+K` | Cycle full map mode (0 → 1 → 2) |
-| `Ctrl+Shift+Alt+L` | Log one frame to `AgDrag.log` (diagnostics) |
 
 ---
 

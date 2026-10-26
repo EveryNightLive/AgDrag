@@ -31,7 +31,7 @@ I originally made these changes for my own setup, but decided to share them in c
 
 - *Dragon's Dogma: Dark Arisen* (Steam). Tested with the December 2017 executable (current Steam version).
 - The **original AgDrag package** installed: [https://github.com/Kaldaien/AgDrag](https://github.com/Kaldaien/AgDrag)
-- **Special K** (`d3d9.dll`). Tested with Special K **0.8.6**. If you have problems with the version included in the original package, try updating Special K.
+- **Special K** (`d3d9.dll`), which is included in the original AgDrag package. Tested with Special K **0.8.6**.
 
 ---
 

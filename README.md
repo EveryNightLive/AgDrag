@@ -4,8 +4,10 @@ An **unofficial, community-made update** of **Agnostic Dragon (AgDrag)** by **Ka
 
 This version adds proper **32:9 support** (tested at 5120×1440) and makes AgDrag work with the **current game executable** and **recent versions of Special K**.
 
+I originally made these changes for my own setup, but decided to share them in case they help other players with ultrawide monitors. Please note that this is a personal project: **I won't be actively maintaining or providing support for this version**. If you'd like to improve it further, you're very welcome to fork it and build on it.
+
 > This update is **not affiliated with or endorsed by** the original author.
-> Original project: https://github.com/Kaldaien/AgDrag
+> Original project: [https://github.com/Kaldaien/AgDrag](https://github.com/Kaldaien/AgDrag)
 
 ---
 
@@ -26,8 +28,8 @@ This version adds proper **32:9 support** (tested at 5120×1440) and makes AgDra
 ## Requirements
 
 - *Dragon's Dogma: Dark Arisen* (Steam). Tested with the December 2017 executable (current Steam version).
-- The **original AgDrag package** installed: [ORIGINAL AGDRAG PACKAGE LINK]
-- **Special K** (`d3d9.dll`). Tested with Special K **[SPECIAL K VERSION]**. If you have problems with the version included in the original package, try updating Special K.
+- The **original AgDrag package** installed: [https://github.com/Kaldaien/AgDrag](https://github.com/Kaldaien/AgDrag)
+- **Special K** (`d3d9.dll`). Tested with Special K **0.8.6**. If you have problems with the version included in the original package, try updating Special K.
 
 ---
 
@@ -95,7 +97,7 @@ Stereo=TRUE
 ## Known limitations
 
 - **Depth of field** is broken at ultrawide resolutions; use the `config.ini` settings above.
-- **AgDrag's FPS limiter** (`ForegroundFPS`/`BackgroundFPS`) is disabled; use Special K's limiter.
+- **AgDrag's FPS limiter** (`ForegroundFPS`/`BackgroundFPS`) is disabled; use Special K's limiter or turn vsync on.
 - Recent Special K versions remove some of AgDrag's cursor hooks (`Removing Corrupted Hook` messages in `logs\d3d9.log`). No visible issues were found in testing.
 - The full map fix depends on the December 2017 `DDDA.exe`. On a different executable, AgDrag detects the mismatch, disables only the map fix and writes a message to `AgDrag.log` instead of crashing.
 - Only tested at 5120×1440.

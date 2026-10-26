@@ -154,7 +154,7 @@ private:
   eTB_iVariableListener*     listener_;
 };
 
-// FIX: __ascii_tolower era interno do CRT antigo do MSVC
+// FIX: __ascii_tolower was an internal of the old MSVC CRT
 #define eTB_CaseAdjust(ch,lower) (((lower) && (ch) >= 'A' && (ch) <= 'Z') ? ((ch) - 'A' + 'a') : (ch))
 
 // Hash function for UTF8 strings

@@ -40,10 +40,10 @@ struct ad_config_s
     float    aspect_ratio      = (16.0f / 9.0f);
     bool     center_ui         = true;
     bool     fix_minimap       = true;
-    bool     hook_map          = true;  // deteccao do mapa grande (localizada em tempo de execucao)
-    bool     fix_dof           = true;  // corrige o DoF em telas mais largas que 16:9
-    bool     map_height_patch  = true;  // mapa grande enxerga tela 16:9 (MapMode=1)
-    int      map_mode          = 1;     // 0 = mapa nativo 32:9 (mouse desalinhado), 1 = mapa na area 16:9 (coerente), 2 = experimental
+    bool     hook_map          = true;  // full map detection (located at runtime)
+    bool     fix_dof           = true;  // original DoF fix for screens wider than 16:9
+    bool     map_height_patch  = true;  // full map sees a 16:9 screen (MapMode=1)
+    int      map_mode          = 1;     // 0 = native 32:9 map (mouse misaligned), 1 = map in the 16:9 area (consistent), 2 = experimental
     bool     allow_background  = true;
     float    foreground_fps    =  0.0f; // Unlimited
     float    background_fps    = 15.0f;
@@ -57,8 +57,8 @@ struct ad_config_s
   } scaling;
 
   struct {
-    bool     aspect_correct    = true;  // FIX (32:9): era false (nomes esticados)
-    float    shift_coeff       = 0.0f;  // 0 = automatico
+    bool     aspect_correct    = true;  // FIX (32:9): was false (stretched nametags)
+    float    shift_coeff       = 0.0f;  // 0 = automatic
     int      always_on_top     = 2;
     bool     temp_on_top       = false; // When the key combo is held
     uint16_t
@@ -74,7 +74,7 @@ struct ad_config_s
     bool hud        = false;
     bool menus      = false;
     bool minimap    = false;
-    bool postfx     = false; // FIX (2026): pos-processamento (DoF etc.)
+    bool postfx     = false; // FIX (2026): post-processing (DoF etc.)
     bool nametags   = false;
   } trace;
 

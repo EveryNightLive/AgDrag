@@ -27,8 +27,8 @@
 #ifndef __AD__HOOK_H__
 #define __AD__HOOK_H__
 
-// FIX: lib removida - compilada com /GL no VS2015, nao linka no VS atual.
-//   Nenhuma funcao MH_* e chamada (os hooks vem do d3d9.dll injetor).
+// FIX: lib removed - built with /GL in VS2015, does not link with current VS.
+//   No MH_* function is called (hooks come from the d3d9.dll injector).
 #include "MinHook/include/MinHook.h"
 
 void

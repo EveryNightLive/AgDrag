@@ -46,9 +46,9 @@
 
 #include "input.h"
 
-// FIX: declaracoes extern movidas para o escopo global. Dentro de funcoes
-//   do namespace ad::InputManager elas apontavam para ad::InputManager::*
-//   (comportamento padrao do C++), que nao existe.
+// FIX: extern declarations moved to global scope. Inside functions of the
+//   ad::InputManager namespace they referred to ad::InputManager::*
+//   (standard C++ behavior), which does not exist.
 extern HMODULE hDLLMod;
 extern float   name_shift_coeff;
 extern bool    vert_fix_map;
@@ -67,7 +67,7 @@ AD_ComputeAspectCoeffsEx (float& x, float& y, float& xoff, float& yoff, bool for
   if (! (config.render.aspect_correction || force))
     return;
 
-  // FIX (32:9): era divisao inteira (5120/1440 = 3, 3440/1440 = 2)
+  // FIX (32:9): was an integer division (5120/1440 = 3, 3440/1440 = 2)
   config.render.aspect_ratio = (float)ad::RenderFix::width / (float)ad::RenderFix::height;
   float rescale = ((16.0f / 9.0f) / config.render.aspect_ratio);
 
@@ -763,8 +763,8 @@ ad::InputManager::Hooker::KeyboardProc (int nCode, WPARAM wParam, LPARAM lParam)
                 GetProcAddress ( hD3D9,
                                     "BMF_SteamAPI_SetOverlayState" );
 
-          // FIX: o Special K atual nao exporta mais esta funcao (era chamada
-          //   sem checar -> crash ao apertar Ctrl+Shift+Tab).
+          // FIX: current Special K no longer exports this function (it was called
+          //   without checking -> crash when pressing Ctrl+Shift+Tab).
           if (BMF_SteamAPI_SetOverlayState != nullptr)
             BMF_SteamAPI_SetOverlayState (visible);
         }
@@ -801,15 +801,15 @@ ad::InputManager::Hooker::KeyboardProc (int nCode, WPARAM wParam, LPARAM lParam)
           pCommandProc->ProcessCommandLine ("FramesToTrace 1");
           pCommandProc->ProcessCommandLine ("TraceFrame true");
         } else if (keys_ [VK_MENU] && vkCode == 'K' && new_press) {
-          // FIX (2026): alterna o modo do mapa grande ao vivo (teste)
+          // FIX (2026): cycles the full map mode live (testing)
           config.render.map_mode = (config.render.map_mode + 1) % 3;
           dll_log.Log (L" [Minimap] MapMode switched to %d", config.render.map_mode);
         } else if (keys_ [VK_MENU] && vkCode == 'D' && new_press) {
           pCommandProc->ProcessCommandLine ("FixDOF toggle");
         }
-        // FIX: atalho Ctrl+Shift+Alt+Backspace desativado. Escrevia num
-        //   endereco fixo (0x01618ee8) do DDDA.exe de 2016, que nao bate com
-        //   o executavel atual (mesmo problema do hook do mapa).
+        // FIX: Ctrl+Shift+Alt+Backspace hotkey disabled. It wrote to a fixed
+        //   address (0x01618ee8) of the 2016 DDDA.exe, which does not match the
+        //   current executable (same problem as the map hook).
 #if 0
         else if (keys_ [VK_MENU] && vkCode == VK_BACK && new_press) {
           float* pfUIAspect = (float *)0x01618ee8;

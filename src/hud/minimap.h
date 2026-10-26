@@ -47,10 +47,10 @@ struct ad_minimap_s : ad_hud_render_task_s {
 
   bool  center_prim    = false; // The triangle in the middle
 
-  // GetTickCount () da ultima vez que o menu do mapa rodou (ver minimap.cpp)
+  // GetTickCount () of the last time the map menu ran (see minimap.cpp)
   unsigned long map_menu_tick = 0;
 
-  // Ultima matriz de UI era identidade na origem (elemento-resto, ver render.cpp)
+  // Last UI matrix was identity at the origin (leftover element, see render.cpp)
   bool  origin_prim    = false;
   bool isMapMenuActive (void);
 

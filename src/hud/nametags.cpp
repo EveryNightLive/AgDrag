@@ -75,7 +75,7 @@ DWORD dwLastBlend    = 0;
 #include "../hook.h"
 
 typedef void (__stdcall *uGUIMap_draw_pfn)(void);
-static uGUIMap_draw_pfn uGUIMap_draw_Original = nullptr; // FIX: static (nome duplicado em minimap.cpp)
+static uGUIMap_draw_pfn uGUIMap_draw_Original = nullptr; // FIX: static (name duplicated in minimap.cpp)
 
 void
 __stdcall

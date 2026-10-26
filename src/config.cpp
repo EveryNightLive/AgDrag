@@ -256,7 +256,7 @@ AD_LoadConfig (std::wstring name) {
         L"ShiftCoeff" );
 
 
-  // Diagnostico: [AgDrag.Trace] - registra um quadro no log ao apertar
+  // Diagnostics: [AgDrag.Trace] - logs one frame when pressing
   //   Ctrl+Shift+Alt+L
   trace.minimap =
     static_cast <ad::ParameterBool *>

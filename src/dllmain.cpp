@@ -56,16 +56,16 @@ DllThread (LPVOID user)
 
   SK_SetPluginName = 
     (SK_SetPluginName_pfn)GetProcAddress (hInjectorDLL, "SK_SetPluginName");
-  // FIX: NAO usar o processador de comandos do Special K.
+  // FIX: do NOT use Special K's command processor.
   //
-  //   O AgDrag manipula o processador do SK com codigo proprio (nao virtual),
-  //   assumindo o layout das classes do SK de 2016. Versoes atuais do Special K
-  //   mudaram essas classes (ex.: getValueString agora tem outra assinatura),
-  //   e o jogo crashava em SK_IVarStub<float>::getValueString ao executar
-  //   "TargetFPS". O AgDrag passa a usar sempre o seu proprio processador
-  //   (FALLBACK_GetCommandProcessor). Efeito colateral: o limitador de FPS
-  //   do AgDrag (ForegroundFPS/BackgroundFPS) nao repassa mais nada ao SK;
-  //   use o limitador do proprio Special K (d3d9.ini).
+  //   AgDrag manipulates SK's processor with its own (non-virtual) code,
+  //   assuming the layout of SK's 2016 classes. Current Special K versions
+  //   changed those classes (e.g. getValueString has a different signature),
+  //   and the game crashed in SK_IVarStub<float>::getValueString when running
+  //   "TargetFPS". AgDrag now always uses its own command processor
+  //   (FALLBACK_GetCommandProcessor). Side effect: AgDrag's FPS limiter
+  //   (ForegroundFPS/BackgroundFPS) no longer forwards anything to SK;
+  //   use Special K's own limiter (d3d9.ini).
 #if 0
   SK_GetCommandProcessor =
     (SK_GetCommandProcessor_pfn)GetProcAddress (hInjectorDLL, "SK_GetCommandProcessor");

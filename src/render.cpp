@@ -53,18 +53,18 @@ struct {
   // Behavior Control
   bool center             = false;
 
-  // FIX (2026): largura do espaco de coordenadas da projecao de UI atual
-  //   (registrador c10 do shader: 2/1280 no HUD, 2/5120 no mapa e em
-  //   alguns menus). O deslocamento de centralizacao e proporcional a ela.
+  // FIX (2026): width of the coordinate space of the current UI projection
+  //   (shader register c10: 2/1280 on the HUD, 2/5120 on the map and in
+  //   some menus). The centering offset is proportional to it.
   float proj_width        = 1280.0f;
 
-  // FIX (2026): ultima matriz c1 enviada pela correcao de HUD. O jogo envia
-  //   c1 (posicao) ANTES de c10 (projecao); se a projecao mudar depois, a
-  //   matriz e reenviada com o deslocamento certo antes do desenho.
-  bool  c1_transformed    = false; // c1 atual passou pela correcao de HUD
-  bool  c1_centered       = false; // ...e foi centralizada (deslocamento em [12])
+  // FIX (2026): last c1 matrix sent by the HUD fix. The game sends c1
+  //   (position) BEFORE c10 (projection); if the projection changes afterwards,
+  //   the matrix is re-sent with the correct offset before the draw.
+  bool  c1_transformed    = false; // current c1 went through the HUD fix
+  bool  c1_centered       = false; // ...and was centered (offset in [12])
   float c1_data [16]      = { };
-  float c1_base_x         = 0.0f;  // [12] sem o deslocamento
+  float c1_base_x         = 0.0f;  // [12] without the offset
   float c1_proj           = 1280.0f;
 
   // State
@@ -93,7 +93,7 @@ struct {
 
     bg_filled     = false;
 
-    proj_width     = 1280.0f; // FIX (2026): cada quadro comeca no padrao
+    proj_width     = 1280.0f; // FIX (2026): every frame starts at the default
     c1_transformed = false;
     c1_centered    = false;
   }
@@ -218,12 +218,12 @@ AD_ComputeAspectCoeffs (float& x, float& y, float& xoff, float& yoff, bool force
 
 #include "hook.h"
 
-// FIX (2026): o desenho atual vai para a tela (viewport do tamanho do
-//   backbuffer)? O mapa grande tambem desenha em texturas auxiliares (ex.: a
-//   mascara da area explorada, 2048 px de largura); a correcao de proporcao
-//   nunca deve ser aplicada nelas.
-// Superficie onde a UI corrigida (HUD, menus, icones do mapa) e desenhada.
-//   Nao guardamos referencia; so comparamos o endereco.
+// FIX (2026): is the current draw going to the screen (viewport the size of
+//   the backbuffer)? The full map also draws into auxiliary textures (e.g. the
+//   explored-area mask, 2048 px wide); the aspect ratio fix must never be
+//   applied to them.
+// Surface where the corrected UI (HUD, menus, map icons) is drawn.
+//   We keep no reference; we only compare the address.
 static void* ad_ui_render_target = nullptr;
 
 static void*
@@ -249,10 +249,10 @@ AD_ViewportIsScreen (void)
           viewport.Height == ad::RenderFix::height ))
     return false;
 
-  // O jogo desenha a UI numa imagem principal do tamanho da tela (copiada
-  //   para o backbuffer no fim) e monta parte do mapa numa imagem
-  //   intermediaria TAMBEM do tamanho da tela. So a principal deve receber a
-  //   correcao; identificamos ela como a superficie onde a UI e desenhada.
+  // The game draws the UI into a main screen-sized image (copied to the
+  //   backbuffer at the end) and builds part of the map in an intermediate
+  //   image that is ALSO screen-sized. Only the main one must get the fix;
+  //   we identify it as the surface where the UI is drawn.
   void* rt = AD_GetCurrentRenderTarget ();
 
   if (ad_ui_render_target != nullptr && rt != nullptr)
@@ -522,8 +522,8 @@ D3D9EndFrame_Post (HRESULT hr, IUnknown* device)
   debug.reset     ();
   ui.reset        ();
 
-  // FIX (2026): mantem a "altura de tela" do mapa grande em dia (MapMode
-  //   pode mudar pelo atalho Ctrl+Shift+Alt+K)
+  // FIX (2026): keeps the full map's "screen height" up to date (MapMode
+  //   can change through the Ctrl+Shift+Alt+K hotkey)
   extern void AD_UpdateMapScreenHeight (void);
   AD_UpdateMapScreenHeight ();
 
@@ -826,10 +826,10 @@ D3D9SetScissorRect_Detour (IDirect3DDevice9* This,
     return S_OK;
   }
 
-  // FIX (2026): com o mapa grande aberto (MapMode=1 + patch de altura), o
-  //   jogo define o recorte nas coordenadas de uma tela 16:9 (5120x2880 em
-  //   32:9). Aplicamos a mesma transformacao do conteudo e da UI centralizada:
-  //   x -> deslocamento + x / escala, y -> y / escala.
+  // FIX (2026): with the full map open (MapMode=1 + height patch), the game
+  //   sets the scissor rect in the coordinates of a 16:9 screen (5120x2880 on
+  //   32:9). We apply the same transform as the content and the centered UI:
+  //   x -> offset + x / scale, y -> y / scale.
   {
     extern bool AD_IsMapHeightPatchActive (void);
 
@@ -1046,9 +1046,9 @@ typedef HRESULT (STDMETHODCALLTYPE *DrawPrimitive_t)
 
 DrawPrimitive_t D3D9DrawPrimitive_Original = nullptr;
 
-// FIX (2026): rastreamento de pos-processamento ([AgDrag.Trace] PostFX=true)
-//   Registra desenhos e constantes que NAO sao da interface, com o tamanho do
-//   render target, para diagnosticar efeitos como o DoF.
+// FIX (2026): post-processing trace ([AgDrag.Trace] PostFX=true)
+//   Logs draws and constants that are NOT part of the UI, with the render
+//   target size, to diagnose effects such as DoF.
 static void
 AD_TracePostFXDraw (const wchar_t* kind, UINT count)
 {
@@ -1119,7 +1119,7 @@ D3D9DrawPrimitive_Detour ( IDirect3DDevice9* This,
     return S_OK;
   }
 
-  // FIX (2026): nao desenha o elemento-resto do minimapa na origem (0,0).
+  // FIX (2026): do not draw the leftover minimap element at the origin (0,0).
   if ( minimap->drawing && minimap->origin_prim && (! minimap->main_map) &&
        vs_checksum == 0x5c8f22bc ) {
     if (tracer.log_frame && config.trace.minimap)
@@ -1139,18 +1139,18 @@ D3D9DrawPrimitive_Detour ( IDirect3DDevice9* This,
       config.render.map_mode >= 1 &&
       minimap->main_map && (! minimap->finished);
 
-    // FIX (2026): desenho do mapa grande numa textura auxiliar: sem ajustes
+    // FIX (2026): full map draw into an auxiliary texture: no adjustments
     bool main_map_offscreen = main_map_new && (! AD_ViewportIsScreen ());
 
     if (main_map_offscreen) {
-      // viewport inalterado
+      // viewport unchanged
     }
 
     else if (main_map_new) {
-      // FIX (2026): elementos da UI do mapa ja foram reduzidos/centralizados
-      //   no SetVertexShaderConstantF; o resto (shaders proprios do mapa)
-      //   vai para a area 16:9 central via viewport - exceto com o patch de
-      //   altura ativo, quando o proprio mapa ja se encaixa no centro.
+      // FIX (2026): map UI elements were already scaled/centered in
+      //   SetVertexShaderConstantF; the rest (the map's own shaders) goes
+      //   to the central 16:9 area through the viewport - except with the
+      //   height patch active, when the map itself already fits the center.
       if (config.render.center_ui && (! ui.c1_transformed)) {
         vp.Width /= x;
         vp.X     += x_off;
@@ -1312,15 +1312,15 @@ D3D9DrawIndexedPrimitive_Detour (IDirect3DDevice9* This,
 
     if (minimap->main_map && minimap->drawing && (! minimap->finished)) { // Main map
       if (config.render.map_mode >= 1 && (! AD_ViewportIsScreen ())) {
-        // FIX (2026): textura auxiliar do mapa: viewport inalterado
+        // FIX (2026): auxiliary map texture: viewport unchanged
       }
 
       else if (config.render.map_mode >= 1) {
-        // FIX (2026): mapa grande reduzido e centralizado na area 16:9,
-        //   coerente com a UI. O modo 0 e o do autor original, que ampliava
-        //   o mapa 2x na tela toda. O modo 2 tambem mantem a compensacao
-        //   vertical do autor (as constantes do shader do mapa tem a escala
-        //   vertical dividida por 2 em outro ponto do mod).
+        // FIX (2026): full map scaled down and centered in the 16:9 area,
+        //   consistent with the UI. Mode 0 is the original author's, which
+        //   enlarged the map 2x across the whole screen. Mode 2 also keeps the
+        //   author's vertical compensation (the map shader constants have their
+        //   vertical scale divided by 2 elsewhere in the mod).
         if (config.render.center_ui) {
           vp.Width /= x;
           vp.X     += x_off;
@@ -1426,13 +1426,13 @@ D3D9SetVertexShaderConstantF_Detour (IDirect3DDevice9* This,
 
   AD_TracePostFXConst (L"VS", StartRegister, pConstantData, Vector4fCount);
 
-  // FIX (2026): acompanha a projecao ortografica da UI (c10 = 2/largura,
-  //   -2/altura, -1, 1) para saber em que espaco de coordenadas estamos.
+  // FIX (2026): tracks the UI orthographic projection (c10 = 2/width,
+  //   -2/height, -1, 1) to know which coordinate space we are in.
   //
-  //   So aceitamos projecoes cuja proporcao (largura/altura) e igual a da
-  //   tela (ex.: 1280x360 e 5120x1440 em 32:9) e com o viewport ocupando a
-  //   tela toda. Qualquer outra (render-to-texture etc.) volta ao padrao de
-  //   1280, que e o comportamento original do mod.
+  //   We only accept projections whose aspect ratio (width/height) matches
+  //   the screen (e.g. 1280x360 and 5120x1440 on 32:9) with the viewport
+  //   covering the whole screen. Anything else (render-to-texture etc.) falls
+  //   back to the default of 1280, which is the mod's original behavior.
   if ( StartRegister == 10 && Vector4fCount >= 1 &&
        pConstantData [2] == -1.0f && pConstantData [3] == 1.0f ) {
     ui.proj_width = 1280.0f;
@@ -1465,15 +1465,15 @@ D3D9SetVertexShaderConstantF_Detour (IDirect3DDevice9* This,
     }
   }
 
-  // Qualquer nova matriz c1 invalida o estado anterior
+  // Any new c1 matrix invalidates the previous state
   if (StartRegister == 1 && Vector4fCount == 4) {
     ui.c1_transformed = false;
     ui.c1_centered    = false;
   }
 
-  // FIX (2026): elemento do minimapa desenhado na origem (0,0) sem escala.
-  //   No jogo original ele fica escondido no canto superior esquerdo; com a
-  //   correcao ele era arrastado para o meio da tela (o "pontinho").
+  // FIX (2026): minimap element drawn at the origin (0,0) without scaling.
+  //   In the original game it is hidden in the top-left corner; with the
+  //   fix it was dragged into the middle of the screen (the "stray dot").
   if (StartRegister == 1 && Vector4fCount == 4) {
     minimap->origin_prim =
       minimap->drawing && (! minimap->main_map) &&
@@ -1496,12 +1496,12 @@ D3D9SetVertexShaderConstantF_Detour (IDirect3DDevice9* This,
   //
   // Post-Processing Fix (e.g. DoF)
   //
-  // FIX (2026): condicao original mantida ("ui.drawing"). Em 2026 testamos
-  //   aplicar esta correcao tambem no cenario: o buffer do DoF que ela pega
-  //   (ex.: 640x360 em 5120x1440) ja e 16:9 de verdade, entao a "correcao"
-  //   so piorava o passo do desfoque. O defeito de DoF em ultrawide tem outra
-  //   origem (buffers auxiliares 16:9) e continua em aberto; contorno: no
-  //   config.ini do jogo, DofFilter=OFF e Stereo=TRUE.
+  // FIX (2026): original condition kept ("ui.drawing"). In 2026 we tried
+  //   applying this fix to the scene as well: the DoF buffer it catches
+  //   (e.g. 640x360 at 5120x1440) really is 16:9, so the "fix" only made
+  //   the blur step worse. The ultrawide DoF issue has a different cause
+  //   (16:9 auxiliary buffers) and remains open; workaround: in the game's
+  //   config.ini, DofFilter=OFF and Stereo=TRUE.
   if (ui.drawing && config.render.fix_dof && (float)viewport.Width / (float)viewport.Height > (16.0f / 9.0f) && postproc.fix_dof && StartRegister == 1 && Vector4fCount == 1 && pConstantData [2] == 0.0f && pConstantData [3] == 0.0f) {
     float inv_x         = 1.0f / pConstantData [0];
     float inv_y         = 1.0f / pConstantData [1];
@@ -1580,8 +1580,8 @@ D3D9SetVertexShaderConstantF_Detour (IDirect3DDevice9* This,
                         pNotConstantData [0], pNotConstantData [1], pNotConstantData [2], pNotConstantData [3] );
       }
 
-      // FIX (2026): o shader do minimapa tambem desenha o mapa grande.
-      //   Se o menu do mapa esta aberto, este desenho e o mapa grande.
+      // FIX (2026): the minimap shader also draws the full map.
+      //   If the map menu is open, this draw is the full map.
       if (minimap->isMapMenuActive ())
         minimap->main_map = true;
 
@@ -1742,18 +1742,18 @@ D3D9SetVertexShaderConstantF_Detour (IDirect3DDevice9* This,
       // Map drawing is special, we will use a viewport to handle this,
       //   so do not mess with its X coordinate.
       //
-      // FIX (2026): no MapMode=1 os elementos do mapa grande sao tratados
-      //   como o resto da UI (reduzidos e centralizados aqui mesmo).
+      // FIX (2026): in MapMode=1 the full map elements are treated like
+      //   the rest of the UI (scaled and centered right here).
       if (minimap->drawing && (! (minimap->main_map && config.render.map_mode >= 1))) {
         ui.center = false;
       }
 
       // Background UI stuff
       //
-      // FIX (2026): no mapa grande (MapMode>=1) este shader tambem desenha
-      //   elementos do proprio mapa (ex.: o "X" dos marcadores); a regra de
-      //   "primeiro fundo translucido do quadro = fundo de menu esticado"
-      //   fazia o X do primeiro marcador sumir e alterava a tonalidade.
+      // FIX (2026): on the full map (MapMode>=1) this shader also draws
+      //   elements of the map itself (e.g. the waypoint "X"); the rule
+      //   "first translucent background of the frame = stretched menu background"
+      //   made the first waypoint's X disappear and changed the tint.
       if ( current_shader.ps == &ps_bg0 && (! ui.bg_filled) &&
            (! (minimap->main_map && config.render.map_mode >= 1)) ) {
         ui.center    = false;
@@ -1849,10 +1849,10 @@ D3D9SetVertexShaderConstantF_Detour (IDirect3DDevice9* This,
           for (int j = 0; j < 4; j++)
             scaled [i+j] = scale2 [i] * orig [j] + scale2 [i+1] * orig [j+4] + scale2 [i+2] * orig [j+8] + scale2 [i+3] * orig [j+12];
 
-        // FIX (2026): a reducao da largura para elementos NAO centralizados
-        //   compensa o viewport reduzido do minimapa do HUD. No mapa grande
-        //   (MapMode>=1) nao existe esse viewport, e a reducao fazia camadas
-        //   de tela cheia cobrirem so metade da tela (faixa escura no mapa).
+        // FIX (2026): the width reduction for NON-centered elements
+        //   compensates for the HUD minimap's reduced viewport. On the full map
+        //   (MapMode>=1) there is no such viewport, and the reduction made
+        //   fullscreen layers cover only half the screen (dark band on the map).
         bool minimap_vp = minimap->drawing &&
                           (! (minimap->main_map && config.render.map_mode >= 1));
 
@@ -1889,13 +1889,13 @@ D3D9SetVertexShaderConstantF_Detour (IDirect3DDevice9* This,
       ///////pNotConstantData [13] += ((float)viewport.Height - viewport.Height / x_scale) / 2.0f;
 
       if (ui.widescreen) {
-        // FIX (2026): guarda a matriz para um possivel reenvio (ver c10)
+        // FIX (2026): store the matrix for a possible re-send (see c10)
         float base_x = ((x_ndc * (float)viewport.Width + (float)viewport.Width) / 2.0f);
 
         ui.c1_transformed = true;
 
-        // FIX (2026): lembra onde a UI corrigida e desenhada (ver
-        //   AD_ViewportIsScreen). Elementos centralizados sao sempre da UI.
+        // FIX (2026): remember where the corrected UI is drawn (see
+        //   AD_ViewportIsScreen). Centered elements always belong to the UI.
         if (ui.center) {
           void* rt = AD_GetCurrentRenderTarget ();
           if (rt != nullptr)
@@ -2201,17 +2201,17 @@ BMF_SetPresentParamsD3D9_Detour (IDirect3DDevice9*      device,
         config.scaling.mouse_y_offset = 0.0f;
       }
 
-      // FIX (32:9): o valor automatico era calculado mas NUNCA aplicado,
-      //   e a formula antiga ((xoff / x) / 2) so dava certo com altura 1440.
+      // FIX (32:9): the automatic value was computed but NEVER applied,
+      //   and the old formula ((xoff / x) / 2) only worked at a height of 1440.
       //
-      //   O HUD vive num espaco virtual de 1280 unidades de largura (720p do
-      //   Xbox 360). Depois de encolhido por ar_scale, sobra uma faixa de
-      //   1280 / ar_scale e precisamos desloca-la para o centro:
+      //   The HUD lives in a virtual space 1280 units wide (Xbox 360's 720p).
+      //   After being shrunk by ar_scale, a band of 1280 / ar_scale remains
+      //   and we need to shift it to the center:
       //
       //     offset = 640 * (1 - 1 / ar_scale)
       //
-      //   Confere com os valores ajustados a mao pelo autor original:
-      //     3440x1440 -> 163.7 (autor: 164.12)   2880x900 -> 284.4 (autor: 285)
+      //   Matches the values hand-tuned by the original author:
+      //     3440x1440 -> 163.7 (author: 164.12)   2880x900 -> 284.4 (author: 285)
       //     5120x1440 / 3840x1080 / 2560x720 -> 320.0
       {
         float ar_scale_auto = ar / (16.0f / 9.0f);
@@ -2231,11 +2231,11 @@ BMF_SetPresentParamsD3D9_Detour (IDirect3DDevice9*      device,
                       config.scaling.hud_x_offset   );
     }
 
-    // FIX (32:9): Deslocamento horizontal dos nomes / marcadores de missao.
-    //   O valor fixo 1.01 foi ajustado para 21:9. Interpolamos entre os
-    //   valores calibrados pelo autor original (16:9 -> 1.000,
+    // FIX (32:9): Horizontal offset of nametags / quest markers.
+    //   The fixed value 1.01 was tuned for 21:9. We interpolate between the
+    //   values calibrated by the original author (16:9 -> 1.000,
     //   21:9 -> 1.016, 16:3 -> 1.046). INI: [AgDrag.Nametags] ShiftCoeff
-    //   (0 = automatico).
+    //   (0 = automatic).
     {
       extern float name_shift_coeff;
 

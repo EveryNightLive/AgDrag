@@ -17,21 +17,21 @@
 
 ad_minimap_s* minimap = nullptr;
 
-// FIX (2026): Deteccao do mapa grande sem endereco fixo.
+// FIX (2026): Full map detection without a fixed address.
 //
-//   O hook original usava o endereco fixo 0x0068BA30 (DDDA.exe de 2016). No
-//   executavel atual (dez/2017) esse endereco cai no MEIO de uma instrucao e
-//   o jogo crashava ao abrir o mapa.
+//   The original hook used the fixed address 0x0068BA30 (2016 DDDA.exe). In
+//   the current executable (Dec 2017) that address lands in the MIDDLE of an
+//   instruction and the game crashed when opening the map.
 //
-//   Agora localizamos a classe uGUIMap em tempo de execucao pelo sistema de
-//   tipos do MT Framework (MtDTI) e enganchamos a entrada 55 da sua vtable:
-//   um metodo __thiscall, sem parametros, executado a cada quadro SOMENTE
-//   enquanto o menu do mapa esta aberto. O hook so registra "o mapa esta
-//   aberto"; quem decide se o desenho atual e o mapa grande e o codigo de
-//   renderizacao, ao detectar o shader do minimapa (ver render.cpp).
+//   We now locate the uGUIMap class at runtime through the MT Framework type
+//   system (MtDTI) and hook entry 55 of its vtable: a __thiscall method
+//   with no parameters that runs every frame ONLY while the map menu is
+//   open. The hook only records "the map is open"; the rendering code
+//   decides whether the current draw is the full map when it detects the
+//   minimap shader (see render.cpp).
 //
-//   __fastcall recebe ECX ("this") e EDX como os dois primeiros parametros e
-//   os repassa intactos ao original (compativel com __thiscall sem args).
+//   __fastcall receives ECX ("this") and EDX as the first two parameters and
+//   passes them untouched to the original (compatible with a no-arg __thiscall).
 static const int AD_UGUIMAP_UPDATE_SLOT = 55;
 
 typedef void (__fastcall *uGUIMap_update_pfn)(void* This, void* edx);
@@ -50,13 +50,13 @@ uGUIMap_update_Detour (void* This, void* edx)
 bool
 ad_minimap_s::isMapMenuActive (void)
 {
-  // O update roda no loop do jogo, o desenho logo depois; 250 ms de folga
-  //   cobre quedas de FPS e o quadro em que o menu fecha.
+  // The update runs in the game loop and drawing right after; a 250 ms margin
+  //   covers FPS drops and the frame in which the menu closes.
   return map_menu_tick != 0 && (GetTickCount () - map_menu_tick) < 250;
 }
 
 //
-// Busca de bytes simples dentro de um intervalo de memoria do proprio modulo
+// Simple byte search within a memory range of the module itself
 //
 static uint8_t*
 AD_FindBytes (uint8_t* begin, size_t len, const uint8_t* pat, size_t pat_len)
@@ -91,12 +91,12 @@ AD_GetSection (HMODULE mod, const char* name, uint8_t** start, size_t* size)
 }
 
 //
-// Localiza a vtable de uGUIMap:
-//   1. string "uGUIMap\0" em .rdata (nome registrado no MtDTI)
-//   2. em .text: "push <string>" seguido de "mov ecx, <objeto MtDTI>"
-//      (construtor estatico do MtDTI da classe)
-//   3. em .text: "mov eax, <MtDTI>; ret" = metodo virtual getDTI()
-//   4. em .rdata: ponteiro para getDTI() = entrada 4 da vtable
+// Locates the uGUIMap vtable:
+//   1. string "uGUIMap\0" in .rdata (name registered in the MtDTI)
+//   2. in .text: "push <string>" followed by "mov ecx, <MtDTI object>"
+//      (static constructor of the class's MtDTI)
+//   3. in .text: "mov eax, <MtDTI>; ret" = virtual method getDTI()
+//   4. in .rdata: pointer to getDTI() = vtable entry 4
 //
 void**
 AD_FindUGUIMapVTable (HMODULE exe)
@@ -110,7 +110,7 @@ AD_FindUGUIMapVTable (HMODULE exe)
     return nullptr;
   }
 
-  static const uint8_t name [] = "uGUIMap"; // inclui o '\0' final
+  static const uint8_t name [] = "uGUIMap"; // includes the trailing '\0'
 
   uint32_t dti = 0;
 
@@ -122,7 +122,7 @@ AD_FindUGUIMapVTable (HMODULE exe)
 
     off = (size_t)(str - rdata);
 
-    if (str [-1] != 0) // precisa ser inicio de string
+    if (str [-1] != 0) // must be the start of a string
       continue;
 
     uint8_t push_str [5] = { 0x68 };
@@ -169,7 +169,7 @@ AD_FindUGUIMapVTable (HMODULE exe)
 
   for (size_t off = 0; off + 4 <= rdata_len; off += 4) {
     if (memcmp (rdata + off, &getter_va, 4) == 0) {
-      void** vtable = (void **)(rdata + off) - 4; // getDTI e a entrada 4
+      void** vtable = (void **)(rdata + off) - 4; // getDTI is entry 4
 
       dll_log.Log ( L" [Minimap] uGUIMap: MtDTI=%08X getDTI=%08X vtable=%08X",
                       dti, getter_va, (uint32_t)(uintptr_t)vtable );
@@ -214,24 +214,24 @@ ad_minimap_s::notifyShaderChange ( uint32_t vs_crc32,
 }
 
 //
-// FIX (2026): "Altura de tela" vista pelo codigo do mapa grande.
+// FIX (2026): "Screen height" as seen by the full map code.
 //
-//   O uGUIMap le a altura da tela (campo +0xBC de um objeto global) em 8
-//   pontos e calcula, por exemplo, (altura - largura * 9/16) / 2 para
-//   encaixar um layout 16:9. Em 32:9 o mapa fica com metade da altura
-//   relativa ao resto da UI. Fazemos essas 8 leituras (e SO elas) lerem esta
-//   variavel, que vale largura * 9/16 no MapMode=1 - assim o mapa se comporta
-//   como numa tela 16:9, igual ao resto da interface, e preenche a area
-//   central inteira com cursor e icones alinhados.
+//   uGUIMap reads the screen height (field +0xBC of a global object) in 8
+//   places and computes, for example, (height - width * 9/16) / 2 to fit
+//   a 16:9 layout. On 32:9 the map ends up with half the height relative
+//   to the rest of the UI. We make the drawing-related reads (and ONLY those)
+//   read this variable, which is width * 9/16 in MapMode=1 - so the map
+//   behaves as on a 16:9 screen, like the rest of the UI, and fills the whole
+//   central area with the cursor and icons aligned.
 //
-//   Enderecos do DDDA.exe de dez/2017; cada instrucao e conferida byte a
-//   byte antes de ser alterada (se o jogo mudar, nada e alterado).
+//   Addresses are from the Dec 2017 DDDA.exe; every instruction is verified
+//   byte by byte before patching (if the game changes, nothing is patched).
 //
-volatile int ad_map_screen_height = 0; // 0 = ainda nao calculado
+volatile int ad_map_screen_height = 0; // 0 = not computed yet
 static   bool ad_map_height_patched = false;
 
-// Com o patch ativo o proprio mapa ja se encaixa na faixa central 16:9;
-//   o mod nao deve reduzir a largura do viewport de novo (ver render.cpp).
+// With the patch active the map itself already fits the central 16:9 band;
+//   the mod must not shrink the viewport width again (see render.cpp).
 bool
 AD_IsMapHeightPatchActive (void)
 {
@@ -262,22 +262,22 @@ struct ad_map_height_site_s {
   uint32_t addr;
   uint8_t  orig [8];
   int      len;     // 6 = mov r32,[r+0BCh] / 8 = movd xmm,[r+0BCh]
-  bool     patch;   // false = so conferido (leitura ligada ao cursor)
+  bool     patch;   // false = verified only (cursor-related read)
 };
 
-// As 3 leituras marcadas "false" convertem a posicao do cursor entre a tela
-//   e o mapa (e o retangulo de "cursor dentro do mapa"). Elas precisam da
-//   altura REAL, a mesma do sistema de entrada do jogo; com a altura falsa o
-//   cursor ficava deslocado e nao alcancava a borda inferior (sem rolagem).
+// The 3 reads marked "false" convert the cursor position between the screen
+//   and the map (and the "cursor inside the map" rectangle). They need the
+//   REAL height, the same one the game's input system uses; with the fake
+//   height the cursor was offset and could not reach the bottom edge (no scrolling).
 static const ad_map_height_site_s ad_map_height_sites [] = {
   { 0x00681597, { 0x8B, 0x80, 0xBC, 0x00, 0x00, 0x00             }, 6, true  },
   { 0x0068230B, { 0x8B, 0x80, 0xBC, 0x00, 0x00, 0x00             }, 6, true  },
-  { 0x00686FA3, { 0x66, 0x0F, 0x6E, 0x80, 0xBC, 0x00, 0x00, 0x00 }, 8, false }, // cursor x janela
+  { 0x00686FA3, { 0x66, 0x0F, 0x6E, 0x80, 0xBC, 0x00, 0x00, 0x00 }, 8, false }, // cursor vs. window
   { 0x0068769D, { 0x8B, 0x80, 0xBC, 0x00, 0x00, 0x00             }, 6, true  },
   { 0x0068EA4F, { 0x8B, 0x89, 0xBC, 0x00, 0x00, 0x00             }, 6, true  },
   { 0x0068F30B, { 0x8B, 0x92, 0xBC, 0x00, 0x00, 0x00             }, 6, true  },
-  { 0x006927A1, { 0x66, 0x0F, 0x6E, 0x81, 0xBC, 0x00, 0x00, 0x00 }, 8, false }, // mapa -> tela (cursor)
-  { 0x006928FE, { 0x8B, 0x92, 0xBC, 0x00, 0x00, 0x00             }, 6, false }, // tela -> mapa (cursor)
+  { 0x006927A1, { 0x66, 0x0F, 0x6E, 0x81, 0xBC, 0x00, 0x00, 0x00 }, 8, false }, // map -> screen (cursor)
+  { 0x006928FE, { 0x8B, 0x92, 0xBC, 0x00, 0x00, 0x00             }, 6, false }, // screen -> map (cursor)
 };
 
 static void
@@ -290,7 +290,7 @@ AD_PatchMapScreenHeight (void)
 
   const int count = sizeof (ad_map_height_sites) / sizeof (ad_map_height_sites [0]);
 
-  // Confere TODOS antes de alterar qualquer um
+  // Verify ALL of them before patching any
   for (int i = 0; i < count; i++) {
     const ad_map_height_site_s& s = ad_map_height_sites [i];
 
@@ -301,7 +301,7 @@ AD_PatchMapScreenHeight (void)
     }
   }
 
-  // Valor inicial seguro ate o swapchain ser capturado: a altura real
+  // Safe initial value until the swapchain is captured: the real height
   if (ad_map_screen_height == 0) {
     uint32_t* pScreen = *(uint32_t **)(uintptr_t)0x018D08F4;
 
@@ -350,7 +350,7 @@ ad_minimap_s::init (void)
 {
   AD_PatchMapScreenHeight ();
 
-  // INI: [AgDrag.Render] HookMap=false desliga a deteccao do mapa.
+  // INI: [AgDrag.Render] HookMap=false disables map detection.
   if (! config.render.hook_map) {
     dll_log.Log (L" [Minimap] Map detection hook DISABLED by INI (HookMap=false)");
     return;
@@ -365,9 +365,9 @@ ad_minimap_s::init (void)
 
   uint8_t* target = (uint8_t *)vtable [AD_UGUIMAP_UPDATE_SLOT];
 
-  // Sanidade: o alvo precisa estar no codigo do executavel e comecar com
-  //   um prologo normal (push ebp; mov ebp, esp). Se o jogo mudar, falhamos
-  //   com seguranca em vez de corromper codigo.
+  // Sanity check: the target must be inside the executable's code and start
+  //   with a normal prologue (push ebp; mov ebp, esp). If the game changes, we
+  //   fail safely instead of corrupting code.
   HMODULE  exe = GetModuleHandle (nullptr);
   uint8_t* text;
   size_t   text_len;

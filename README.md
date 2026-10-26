@@ -6,6 +6,8 @@ This version adds proper **32:9 support** (tested at 5120×1440) and makes AgDra
 
 I originally made these changes for my own setup, but decided to share them in case they help other players with ultrawide monitors. Please note that this is a personal project: **I won't be actively maintaining or providing support for this version**. If you'd like to improve it further, you're very welcome to fork it and build on it.
 
+**AI disclosure:** The changes in this update were developed with the help of an AI assistant (Claude, by Anthropic), including the analysis of the game executable and the code modifications. I tested everything in-game on my own setup (5120×1440), but the code has not been reviewed by an experienced C++ developer. Use at your own risk.
+
 > This update is **not affiliated with or endorsed by** the original author.
 > Original project: [https://github.com/Kaldaien/AgDrag](https://github.com/Kaldaien/AgDrag)
 

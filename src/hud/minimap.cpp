@@ -341,8 +341,8 @@ AD_PatchMapScreenHeight (void)
 
   ad_map_height_patched = true;
 
-  dll_log.Log ( L" [Minimap] Map height patch applied (%d of %d sites, variable at %08X)",
-                  patched, count, var_addr );
+  dll_log.Log ( L" [Minimap] Map height patch applied (%d of %d sites)",
+                  patched, count );
 }
 
 void

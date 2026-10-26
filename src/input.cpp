@@ -800,10 +800,6 @@ ad::InputManager::Hooker::KeyboardProc (int nCode, WPARAM wParam, LPARAM lParam)
         } else if (keys_ [VK_MENU] && vkCode == 'L' && new_press) {
           pCommandProc->ProcessCommandLine ("FramesToTrace 1");
           pCommandProc->ProcessCommandLine ("TraceFrame true");
-        } else if (keys_ [VK_MENU] && vkCode == 'K' && new_press) {
-          // FIX (2026): cycles the full map mode live (testing)
-          config.render.map_mode = (config.render.map_mode + 1) % 3;
-          dll_log.Log (L" [Minimap] MapMode switched to %d", config.render.map_mode);
         } else if (keys_ [VK_MENU] && vkCode == 'D' && new_press) {
           pCommandProc->ProcessCommandLine ("FixDOF toggle");
         }

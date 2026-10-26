@@ -522,8 +522,7 @@ D3D9EndFrame_Post (HRESULT hr, IUnknown* device)
   debug.reset     ();
   ui.reset        ();
 
-  // FIX (2026): keeps the full map's "screen height" up to date (MapMode
-  //   can change through the Ctrl+Shift+Alt+K hotkey)
+  // FIX (2026): keeps the full map's "screen height" up to date
   extern void AD_UpdateMapScreenHeight (void);
   AD_UpdateMapScreenHeight ();
 
@@ -848,18 +847,9 @@ D3D9SetScissorRect_Detour (IDirect3DDevice9* This,
         fixed.top    = (LONG)(        (float)pRect->top    / ar_scale);
         fixed.bottom = (LONG)(        (float)pRect->bottom / ar_scale);
 
-        if (tracer.log_frame && config.trace.minimap)
-          dll_log.Log ( L" [Scissor] (%ld,%ld - %ld,%ld) -> (%ld,%ld - %ld,%ld)",
-                          pRect->left, pRect->top, pRect->right, pRect->bottom,
-                            fixed.left, fixed.top, fixed.right, fixed.bottom );
-
         return D3D9SetScissorRect_Original (This, &fixed);
       }
     }
-
-    if (pRect != nullptr && tracer.log_frame && config.trace.minimap)
-      dll_log.Log ( L" [Scissor] (%ld,%ld - %ld,%ld) unchanged",
-                      pRect->left, pRect->top, pRect->right, pRect->bottom );
   }
 
   return D3D9SetScissorRect_Original (This, pRect);
@@ -1046,41 +1036,6 @@ typedef HRESULT (STDMETHODCALLTYPE *DrawPrimitive_t)
 
 DrawPrimitive_t D3D9DrawPrimitive_Original = nullptr;
 
-// FIX (2026): post-processing trace ([AgDrag.Trace] PostFX=true)
-//   Logs draws and constants that are NOT part of the UI, with the render
-//   target size, to diagnose effects such as DoF.
-static void
-AD_TracePostFXDraw (const wchar_t* kind, UINT count)
-{
-  if (! (tracer.log_frame && config.trace.postfx && (! ui.drawing)))
-    return;
-
-  UINT rt_w = 0, rt_h = 0;
-  IDirect3DSurface9* pRT = nullptr;
-
-  if (SUCCEEDED (ad::RenderFix::pDevice->GetRenderTarget (0, &pRT)) && pRT != nullptr) {
-    D3DSURFACE_DESC desc;
-    if (SUCCEEDED (pRT->GetDesc (&desc))) { rt_w = desc.Width; rt_h = desc.Height; }
-    pRT->Release ();
-  }
-
-  dll_log.Log ( L" [PostFX] %s (%u) vs: %x ps: %x  RT %ux%u  VP (%lu,%lu %lux%lu)",
-                  kind, count, vs_checksum, ps_checksum, rt_w, rt_h,
-                    viewport.X, viewport.Y, viewport.Width, viewport.Height );
-}
-
-static void
-AD_TracePostFXConst (const wchar_t* stage, UINT start, const float* p, UINT count)
-{
-  if (! (tracer.log_frame && config.trace.postfx && (! ui.drawing)))
-    return;
-
-  for (UINT i = 0; i < count && i < 8; i++) {
-    dll_log.Log ( L" [PostFX]   %s c%u: %f %f %f %f", stage, start + i,
-                    p [i*4+0], p [i*4+1], p [i*4+2], p [i*4+3] );
-  }
-}
-
 
 COM_DECLSPEC_NOTHROW
 __declspec (noinline)
@@ -1100,7 +1055,6 @@ D3D9DrawPrimitive_Detour ( IDirect3DDevice9* This,
                                          PrimitiveCount );
   }
 
-  AD_TracePostFXDraw (L"Draw", PrimitiveCount);
 
   //
   // Kill Debug VS or PS
@@ -1122,9 +1076,6 @@ D3D9DrawPrimitive_Detour ( IDirect3DDevice9* This,
   // FIX (2026): do not draw the leftover minimap element at the origin (0,0).
   if ( minimap->drawing && minimap->origin_prim && (! minimap->main_map) &&
        vs_checksum == 0x5c8f22bc ) {
-    if (tracer.log_frame && config.trace.minimap)
-      dll_log.Log (L" Minimap Item %d: SKIPPED (origin prim)", minimap->prims_drawn);
-
     minimap->prims_drawn++;
     return S_OK;
   }
@@ -1136,7 +1087,7 @@ D3D9DrawPrimitive_Detour ( IDirect3DDevice9* This,
     AD_ComputeAspectCoeffs (x, y, x_off, y_off);
 
     bool main_map_new =
-      config.render.map_mode >= 1 &&
+      config.render.map_mode == 1 &&
       minimap->main_map && (! minimap->finished);
 
     // FIX (2026): full map draw into an auxiliary texture: no adjustments
@@ -1178,14 +1129,6 @@ D3D9DrawPrimitive_Detour ( IDirect3DDevice9* This,
 
     else {
       vp.Y += ((float)viewport.Height - vp.Height / x) / 2.0f;
-    }
-
-    if (tracer.log_frame && config.trace.minimap) {
-      dll_log.Log ( L"   -> viewport (%lu,%lu %lux%lu) main_map=%d finished=%d shader_changes=%d target=%s",
-                      vp.X, vp.Y, vp.Width, vp.Height,
-                        (int)minimap->main_map, (int)minimap->finished,
-                          minimap->shader_changes,
-                            AD_ViewportIsScreen () ? L"screen" : L"offscreen" );
     }
 
     D3D9SetViewport_Original (This, &vp);
@@ -1271,7 +1214,6 @@ D3D9DrawIndexedPrimitive_Detour (IDirect3DDevice9* This,
 
   }
 
-  AD_TracePostFXDraw (L"DrawIndexed", primCount);
 
   //
   // Kill Debug VS or PS
@@ -1311,23 +1253,18 @@ D3D9DrawIndexedPrimitive_Detour (IDirect3DDevice9* This,
     AD_ComputeAspectCoeffs (x, y, x_off, y_off);
 
     if (minimap->main_map && minimap->drawing && (! minimap->finished)) { // Main map
-      if (config.render.map_mode >= 1 && (! AD_ViewportIsScreen ())) {
+      if (config.render.map_mode == 1 && (! AD_ViewportIsScreen ())) {
         // FIX (2026): auxiliary map texture: viewport unchanged
       }
 
-      else if (config.render.map_mode >= 1) {
+      else if (config.render.map_mode == 1) {
         // FIX (2026): full map scaled down and centered in the 16:9 area,
         //   consistent with the UI. Mode 0 is the original author's, which
-        //   enlarged the map 2x across the whole screen. Mode 2 also keeps the
-        //   author's vertical compensation (the map shader constants have their
-        //   vertical scale divided by 2 elsewhere in the mod).
+        //   enlarged the map 2x across the whole screen.
         if (config.render.center_ui) {
           vp.Width /= x;
           vp.X     += x_off;
         }
-
-        if (config.render.map_mode == 2)
-          vp.Height *= x;
       } else {
         vp.Height *= x;
       }
@@ -1338,14 +1275,6 @@ D3D9DrawIndexedPrimitive_Detour (IDirect3DDevice9* This,
       }
 
       vp.Y += ((float)viewport.Height - vp.Height / x) / 2.0f;
-    }
-
-    if (tracer.log_frame && config.trace.minimap) {
-      dll_log.Log ( L"   -> viewport (%lu,%lu %lux%lu) main_map=%d finished=%d shader_changes=%d target=%s",
-                      vp.X, vp.Y, vp.Width, vp.Height,
-                        (int)minimap->main_map, (int)minimap->finished,
-                          minimap->shader_changes,
-                            AD_ViewportIsScreen () ? L"screen" : L"offscreen" );
     }
 
     D3D9SetViewport_Original (This, &vp);
@@ -1424,7 +1353,6 @@ D3D9SetVertexShaderConstantF_Detour (IDirect3DDevice9* This,
                                                          Vector4fCount );
   }
 
-  AD_TracePostFXConst (L"VS", StartRegister, pConstantData, Vector4fCount);
 
   // FIX (2026): tracks the UI orthographic projection (c10 = 2/width,
   //   -2/height, -1, 1) to know which coordinate space we are in.
@@ -1451,17 +1379,11 @@ D3D9SetVertexShaderConstantF_Detour (IDirect3DDevice9* This,
       }
     }
 
-    if (tracer.log_frame && config.trace.ui)
-      dll_log.Log (L" [Proj] c10 -> UI projection width = %f", ui.proj_width);
-
     if (ui.c1_centered && ui.c1_proj != ui.proj_width && ui.widescreen) {
       ui.c1_data [12] = ui.c1_base_x + config.scaling.hud_x_offset * (ui.proj_width / 1280.0f);
       ui.c1_proj      = ui.proj_width;
 
       D3D9SetVertexShaderConstantF_Original (This, 1, ui.c1_data, 4);
-
-      if (tracer.log_frame && config.trace.ui)
-        dll_log.Log (L" [Proj] re-sent c1 with x = %f", ui.c1_data [12]);
     }
   }
 
@@ -1502,7 +1424,7 @@ D3D9SetVertexShaderConstantF_Detour (IDirect3DDevice9* This,
   //   the blur step worse. The ultrawide DoF issue has a different cause
   //   (16:9 auxiliary buffers) and remains open; workaround: in the game's
   //   config.ini, DofFilter=OFF and Stereo=TRUE.
-  if (ui.drawing && config.render.fix_dof && (float)viewport.Width / (float)viewport.Height > (16.0f / 9.0f) && postproc.fix_dof && StartRegister == 1 && Vector4fCount == 1 && pConstantData [2] == 0.0f && pConstantData [3] == 0.0f) {
+  if (ui.drawing && (float)viewport.Width / (float)viewport.Height > (16.0f / 9.0f) && postproc.fix_dof && StartRegister == 1 && Vector4fCount == 1 && pConstantData [2] == 0.0f && pConstantData [3] == 0.0f) {
     float inv_x         = 1.0f / pConstantData [0];
     float inv_y         = 1.0f / pConstantData [1];
     const float aspect  = 16.0f / 9.0f;
@@ -1522,16 +1444,6 @@ D3D9SetVertexShaderConstantF_Detour (IDirect3DDevice9* This,
       pFixedConstants [2] = 0.0f;
       pFixedConstants [3] = 0.0f;
 
-      static bool dof_logged = false;
-      if (! dof_logged) {
-        dof_logged = true;
-        dll_log.Log ( L" [DoF] Depth of field correction active (pixel size 1/%.1f x 1/%.1f -> 1/%.1f x 1/%.1f)",
-                        inv_x, inv_y, inv_x, 1.0f / pFixedConstants [1] );
-      }
-
-      if (tracer.log_frame && (config.trace.ui || config.trace.minimap))
-        dll_log.Log ( L" [DoF] vs: %x ps: %x - pixel size 1/%.1f x 1/%.1f -> 1/%.1f x 1/%.1f",
-                        vs_checksum, ps_checksum, inv_x, inv_y, inv_x, 1.0f / pFixedConstants [1] );
 
       if (ui.widescreen)
         return D3D9SetVertexShaderConstantF_Original (This, StartRegister, pFixedConstants, Vector4fCount);
@@ -1573,12 +1485,6 @@ D3D9SetVertexShaderConstantF_Detour (IDirect3DDevice9* This,
       }
 
       minimap->drawing = true;
-
-      if (tracer.log_frame && config.trace.minimap) {
-        dll_log.Log ( L" [Minimap c2] (%u vec4) %f %f %f %f -> %f %f %f %f",
-                        Vector4fCount, pConstantData [0], pConstantData [1], pConstantData [2], pConstantData [3],
-                        pNotConstantData [0], pNotConstantData [1], pNotConstantData [2], pNotConstantData [3] );
-      }
 
       // FIX (2026): the minimap shader also draws the full map.
       //   If the map menu is open, this draw is the full map.
@@ -1630,7 +1536,7 @@ D3D9SetVertexShaderConstantF_Detour (IDirect3DDevice9* This,
       minimap->prim_zpos = pConstantData [14];
     }
 
-  if (ui.drawing && ((! minimap->main_map) || config.render.map_mode >= 1) && config.render.aspect_correction && viewport.Width / viewport.Height == ad::RenderFix::width / ad::RenderFix::height && (StartRegister == 1/* || StartRegister == 9*/)) {
+  if (ui.drawing && ((! minimap->main_map) || config.render.map_mode == 1) && config.render.aspect_correction && viewport.Width / viewport.Height == ad::RenderFix::width / ad::RenderFix::height && (StartRegister == 1/* || StartRegister == 9*/)) {
     //last_vs = 0x5c8f22bc && last_ps == 0xbf9778a
 
     //
@@ -1744,7 +1650,7 @@ D3D9SetVertexShaderConstantF_Detour (IDirect3DDevice9* This,
       //
       // FIX (2026): in MapMode=1 the full map elements are treated like
       //   the rest of the UI (scaled and centered right here).
-      if (minimap->drawing && (! (minimap->main_map && config.render.map_mode >= 1))) {
+      if (minimap->drawing && (! (minimap->main_map && config.render.map_mode == 1))) {
         ui.center = false;
       }
 
@@ -1755,7 +1661,7 @@ D3D9SetVertexShaderConstantF_Detour (IDirect3DDevice9* This,
       //   "first translucent background of the frame = stretched menu background"
       //   made the first waypoint's X disappear and changed the tint.
       if ( current_shader.ps == &ps_bg0 && (! ui.bg_filled) &&
-           (! (minimap->main_map && config.render.map_mode >= 1)) ) {
+           (! (minimap->main_map && config.render.map_mode == 1)) ) {
         ui.center    = false;
         ui.bg_filled = true;
       }
@@ -1789,8 +1695,6 @@ D3D9SetVertexShaderConstantF_Detour (IDirect3DDevice9* This,
         dll_log.Log (L"           %% (%2.1f,%2.1f <> %2.1f, %2.1f {%2.1f}",                  pConstantData [2], pConstantData [3], pConstantData [6], pConstantData [7], pConstantData [15]);
         dll_log.Log (L" --> (%2.1f,%2.1f) {%2.1f,%2.1f}", x_ndc, y_ndc, x_off, y_off);
         dll_log.Log (L" UI Scale: (%2.1f,%2.1f)", x_scale, y_scale);
-        dll_log.Log (L" Proj width: %f, center=%d, x offset=%f", ui.proj_width, (int)ui.center,
-                       config.scaling.hud_x_offset * (ui.proj_width / 1280.0f));
 
         float xx, yy;
 
@@ -1854,7 +1758,7 @@ D3D9SetVertexShaderConstantF_Detour (IDirect3DDevice9* This,
         //   (MapMode>=1) there is no such viewport, and the reduction made
         //   fullscreen layers cover only half the screen (dark band on the map).
         bool minimap_vp = minimap->drawing &&
-                          (! (minimap->main_map && config.render.map_mode >= 1));
+                          (! (minimap->main_map && config.render.map_mode == 1));
 
         if (minimap_vp || ui.center)
           pNotConstantData [0] = scaled [0];
@@ -1944,7 +1848,6 @@ D3D9SetPixelShaderConstantF_Detour (IDirect3DDevice9* This,
                                                         Vector4fCount );
   }
 
-  AD_TracePostFXConst (L"PS", StartRegister, pConstantData, Vector4fCount);
 
   if (ui.scissoring) {
 #if 0

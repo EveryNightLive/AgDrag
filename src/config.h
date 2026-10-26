@@ -41,9 +41,8 @@ struct ad_config_s
     bool     center_ui         = true;
     bool     fix_minimap       = true;
     bool     hook_map          = true;  // full map detection (located at runtime)
-    bool     fix_dof           = true;  // original DoF fix for screens wider than 16:9
     bool     map_height_patch  = true;  // full map sees a 16:9 screen (MapMode=1)
-    int      map_mode          = 1;     // 0 = native 32:9 map (mouse misaligned), 1 = map in the 16:9 area (consistent), 2 = experimental
+    int      map_mode          = 1;     // 0 = native 32:9 map (mouse misaligned), 1 = map in the 16:9 area (consistent)
     bool     allow_background  = true;
     float    foreground_fps    =  0.0f; // Unlimited
     float    background_fps    = 15.0f;
@@ -74,7 +73,6 @@ struct ad_config_s
     bool hud        = false;
     bool menus      = false;
     bool minimap    = false;
-    bool postfx     = false; // FIX (2026): post-processing (DoF etc.)
     bool nametags   = false;
   } trace;
 

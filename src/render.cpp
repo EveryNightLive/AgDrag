@@ -18,6 +18,11 @@
  *
  *   If not, see <http://www.gnu.org/licenses/>.
  *
+ *
+ * MODIFIED in 2026 by EveryNightLive (unofficial 32:9 update):
+ *   32:9 support, compatibility with the Dec/2017 DDDA.exe and recent
+ *   Special K versions, full map / menu / HUD fixes, build fixes.
+ *   Changes are marked with "FIX" comments. See README.md.
 **/
 
 #include "render.h"
@@ -29,6 +34,7 @@
 #include <comdef.h>
 
 #include <d3d9.h>
+#include <cmath>
 #include <d3d9types.h>
 
 #include "hud/minimap.h"
@@ -46,6 +52,20 @@ struct {
 
   // Behavior Control
   bool center             = false;
+
+  // FIX (2026): largura do espaco de coordenadas da projecao de UI atual
+  //   (registrador c10 do shader: 2/1280 no HUD, 2/5120 no mapa e em
+  //   alguns menus). O deslocamento de centralizacao e proporcional a ela.
+  float proj_width        = 1280.0f;
+
+  // FIX (2026): ultima matriz c1 enviada pela correcao de HUD. O jogo envia
+  //   c1 (posicao) ANTES de c10 (projecao); se a projecao mudar depois, a
+  //   matriz e reenviada com o deslocamento certo antes do desenho.
+  bool  c1_transformed    = false; // c1 atual passou pela correcao de HUD
+  bool  c1_centered       = false; // ...e foi centralizada (deslocamento em [12])
+  float c1_data [16]      = { };
+  float c1_base_x         = 0.0f;  // [12] sem o deslocamento
+  float c1_proj           = 1280.0f;
 
   // State
   bool  drawing           = false;
@@ -72,6 +92,10 @@ struct {
     drawing_menu  = false;
 
     bg_filled     = false;
+
+    proj_width     = 1280.0f; // FIX (2026): cada quadro comeca no padrao
+    c1_transformed = false;
+    c1_centered    = false;
   }
 } ui;
 
@@ -193,6 +217,49 @@ AD_ComputeAspectCoeffs (float& x, float& y, float& xoff, float& yoff, bool force
 }
 
 #include "hook.h"
+
+// FIX (2026): o desenho atual vai para a tela (viewport do tamanho do
+//   backbuffer)? O mapa grande tambem desenha em texturas auxiliares (ex.: a
+//   mascara da area explorada, 2048 px de largura); a correcao de proporcao
+//   nunca deve ser aplicada nelas.
+// Superficie onde a UI corrigida (HUD, menus, icones do mapa) e desenhada.
+//   Nao guardamos referencia; so comparamos o endereco.
+static void* ad_ui_render_target = nullptr;
+
+static void*
+AD_GetCurrentRenderTarget (void)
+{
+  IDirect3DSurface9* pRT = nullptr;
+
+  if ( ad::RenderFix::pDevice != nullptr &&
+       SUCCEEDED (ad::RenderFix::pDevice->GetRenderTarget (0, &pRT)) &&
+       pRT != nullptr ) {
+    pRT->Release ();
+    return pRT;
+  }
+
+  return nullptr;
+}
+
+static bool
+AD_ViewportIsScreen (void)
+{
+  if (! ( viewport.X == 0 && viewport.Y == 0 &&
+          viewport.Width  == ad::RenderFix::width &&
+          viewport.Height == ad::RenderFix::height ))
+    return false;
+
+  // O jogo desenha a UI numa imagem principal do tamanho da tela (copiada
+  //   para o backbuffer no fim) e monta parte do mapa numa imagem
+  //   intermediaria TAMBEM do tamanho da tela. So a principal deve receber a
+  //   correcao; identificamos ela como a superficie onde a UI e desenhada.
+  void* rt = AD_GetCurrentRenderTarget ();
+
+  if (ad_ui_render_target != nullptr && rt != nullptr)
+    return rt == ad_ui_render_target;
+
+  return true;
+}
 
 IDirect3DVertexShader9* g_pVS;
 IDirect3DPixelShader9*  g_pPS;
@@ -454,6 +521,11 @@ D3D9EndFrame_Post (HRESULT hr, IUnknown* device)
 
   debug.reset     ();
   ui.reset        ();
+
+  // FIX (2026): mantem a "altura de tela" do mapa grande em dia (MapMode
+  //   pode mudar pelo atalho Ctrl+Shift+Alt+K)
+  extern void AD_UpdateMapScreenHeight (void);
+  AD_UpdateMapScreenHeight ();
 
   minimap->reset  ();
   nametags->reset ();
@@ -754,6 +826,42 @@ D3D9SetScissorRect_Detour (IDirect3DDevice9* This,
     return S_OK;
   }
 
+  // FIX (2026): com o mapa grande aberto (MapMode=1 + patch de altura), o
+  //   jogo define o recorte nas coordenadas de uma tela 16:9 (5120x2880 em
+  //   32:9). Aplicamos a mesma transformacao do conteudo e da UI centralizada:
+  //   x -> deslocamento + x / escala, y -> y / escala.
+  {
+    extern bool AD_IsMapHeightPatchActive (void);
+
+    if ( pRect != nullptr && config.render.aspect_correction &&
+         config.render.center_ui && config.render.map_mode == 1 &&
+         AD_IsMapHeightPatchActive () && minimap->isMapMenuActive () &&
+         ad::RenderFix::height != 0 && AD_ViewportIsScreen () ) {
+      float ar_scale = ((float)ad::RenderFix::width / (float)ad::RenderFix::height) / (16.0f / 9.0f);
+
+      if (ar_scale > 1.0f) {
+        float x_off = ((float)ad::RenderFix::width - (float)ad::RenderFix::width / ar_scale) / 2.0f;
+
+        RECT fixed;
+        fixed.left   = (LONG)(x_off + (float)pRect->left   / ar_scale);
+        fixed.right  = (LONG)(x_off + (float)pRect->right  / ar_scale);
+        fixed.top    = (LONG)(        (float)pRect->top    / ar_scale);
+        fixed.bottom = (LONG)(        (float)pRect->bottom / ar_scale);
+
+        if (tracer.log_frame && config.trace.minimap)
+          dll_log.Log ( L" [Scissor] (%ld,%ld - %ld,%ld) -> (%ld,%ld - %ld,%ld)",
+                          pRect->left, pRect->top, pRect->right, pRect->bottom,
+                            fixed.left, fixed.top, fixed.right, fixed.bottom );
+
+        return D3D9SetScissorRect_Original (This, &fixed);
+      }
+    }
+
+    if (pRect != nullptr && tracer.log_frame && config.trace.minimap)
+      dll_log.Log ( L" [Scissor] (%ld,%ld - %ld,%ld) unchanged",
+                      pRect->left, pRect->top, pRect->right, pRect->bottom );
+  }
+
   return D3D9SetScissorRect_Original (This, pRect);
 
   // If we don't care about aspect ratio, then just early-out
@@ -938,6 +1046,42 @@ typedef HRESULT (STDMETHODCALLTYPE *DrawPrimitive_t)
 
 DrawPrimitive_t D3D9DrawPrimitive_Original = nullptr;
 
+// FIX (2026): rastreamento de pos-processamento ([AgDrag.Trace] PostFX=true)
+//   Registra desenhos e constantes que NAO sao da interface, com o tamanho do
+//   render target, para diagnosticar efeitos como o DoF.
+static void
+AD_TracePostFXDraw (const wchar_t* kind, UINT count)
+{
+  if (! (tracer.log_frame && config.trace.postfx && (! ui.drawing)))
+    return;
+
+  UINT rt_w = 0, rt_h = 0;
+  IDirect3DSurface9* pRT = nullptr;
+
+  if (SUCCEEDED (ad::RenderFix::pDevice->GetRenderTarget (0, &pRT)) && pRT != nullptr) {
+    D3DSURFACE_DESC desc;
+    if (SUCCEEDED (pRT->GetDesc (&desc))) { rt_w = desc.Width; rt_h = desc.Height; }
+    pRT->Release ();
+  }
+
+  dll_log.Log ( L" [PostFX] %s (%u) vs: %x ps: %x  RT %ux%u  VP (%lu,%lu %lux%lu)",
+                  kind, count, vs_checksum, ps_checksum, rt_w, rt_h,
+                    viewport.X, viewport.Y, viewport.Width, viewport.Height );
+}
+
+static void
+AD_TracePostFXConst (const wchar_t* stage, UINT start, const float* p, UINT count)
+{
+  if (! (tracer.log_frame && config.trace.postfx && (! ui.drawing)))
+    return;
+
+  for (UINT i = 0; i < count && i < 8; i++) {
+    dll_log.Log ( L" [PostFX]   %s c%u: %f %f %f %f", stage, start + i,
+                    p [i*4+0], p [i*4+1], p [i*4+2], p [i*4+3] );
+  }
+}
+
+
 COM_DECLSPEC_NOTHROW
 __declspec (noinline)
 HRESULT
@@ -956,6 +1100,8 @@ D3D9DrawPrimitive_Detour ( IDirect3DDevice9* This,
                                          PrimitiveCount );
   }
 
+  AD_TracePostFXDraw (L"Draw", PrimitiveCount);
+
   //
   // Kill Debug VS or PS
   //
@@ -973,13 +1119,45 @@ D3D9DrawPrimitive_Detour ( IDirect3DDevice9* This,
     return S_OK;
   }
 
+  // FIX (2026): nao desenha o elemento-resto do minimapa na origem (0,0).
+  if ( minimap->drawing && minimap->origin_prim && (! minimap->main_map) &&
+       vs_checksum == 0x5c8f22bc ) {
+    if (tracer.log_frame && config.trace.minimap)
+      dll_log.Log (L" Minimap Item %d: SKIPPED (origin prim)", minimap->prims_drawn);
+
+    minimap->prims_drawn++;
+    return S_OK;
+  }
+
   if (minimap->drawing) {
     D3DVIEWPORT9 vp = viewport;
     float x, y;
     float x_off, y_off;
     AD_ComputeAspectCoeffs (x, y, x_off, y_off);
 
-    if (config.render.center_ui && ((! minimap->main_map) || minimap->finished || (! minimap->drawing))) {
+    bool main_map_new =
+      config.render.map_mode >= 1 &&
+      minimap->main_map && (! minimap->finished);
+
+    // FIX (2026): desenho do mapa grande numa textura auxiliar: sem ajustes
+    bool main_map_offscreen = main_map_new && (! AD_ViewportIsScreen ());
+
+    if (main_map_offscreen) {
+      // viewport inalterado
+    }
+
+    else if (main_map_new) {
+      // FIX (2026): elementos da UI do mapa ja foram reduzidos/centralizados
+      //   no SetVertexShaderConstantF; o resto (shaders proprios do mapa)
+      //   vai para a area 16:9 central via viewport - exceto com o patch de
+      //   altura ativo, quando o proprio mapa ja se encaixa no centro.
+      if (config.render.center_ui && (! ui.c1_transformed)) {
+        vp.Width /= x;
+        vp.X     += x_off;
+      }
+    }
+
+    else if (config.render.center_ui && ((! minimap->main_map) || minimap->finished || (! minimap->drawing))) {
       vp.Width /= x;
       vp.X     += x_off;
     }
@@ -993,13 +1171,21 @@ D3D9DrawPrimitive_Detour ( IDirect3DDevice9* This,
                                                                         ps_checksum );
     }
 
-    if ((minimap->ps23 == 1.0f && minimap->ps43 == 1.0f && vert_fix_map) || minimap->center_prim || (minimap->main_map && minimap->drawing && (! minimap->finished))) {
+    if (main_map_offscreen || main_map_new || (minimap->ps23 == 1.0f && minimap->ps43 == 1.0f && vert_fix_map) || minimap->center_prim || (minimap->main_map && minimap->drawing && (! minimap->finished))) {
       //if (! vert_fix_map)
         //vp.Height -= ((float)viewport.Height - vp.Height / x) / 2.0f;
     }
 
     else {
       vp.Y += ((float)viewport.Height - vp.Height / x) / 2.0f;
+    }
+
+    if (tracer.log_frame && config.trace.minimap) {
+      dll_log.Log ( L"   -> viewport (%lu,%lu %lux%lu) main_map=%d finished=%d shader_changes=%d target=%s",
+                      vp.X, vp.Y, vp.Width, vp.Height,
+                        (int)minimap->main_map, (int)minimap->finished,
+                          minimap->shader_changes,
+                            AD_ViewportIsScreen () ? L"screen" : L"offscreen" );
     }
 
     D3D9SetViewport_Original (This, &vp);
@@ -1085,6 +1271,8 @@ D3D9DrawIndexedPrimitive_Detour (IDirect3DDevice9* This,
 
   }
 
+  AD_TracePostFXDraw (L"DrawIndexed", primCount);
+
   //
   // Kill Debug VS or PS
   //
@@ -1123,7 +1311,26 @@ D3D9DrawIndexedPrimitive_Detour (IDirect3DDevice9* This,
     AD_ComputeAspectCoeffs (x, y, x_off, y_off);
 
     if (minimap->main_map && minimap->drawing && (! minimap->finished)) { // Main map
-      vp.Height *= x;
+      if (config.render.map_mode >= 1 && (! AD_ViewportIsScreen ())) {
+        // FIX (2026): textura auxiliar do mapa: viewport inalterado
+      }
+
+      else if (config.render.map_mode >= 1) {
+        // FIX (2026): mapa grande reduzido e centralizado na area 16:9,
+        //   coerente com a UI. O modo 0 e o do autor original, que ampliava
+        //   o mapa 2x na tela toda. O modo 2 tambem mantem a compensacao
+        //   vertical do autor (as constantes do shader do mapa tem a escala
+        //   vertical dividida por 2 em outro ponto do mod).
+        if (config.render.center_ui) {
+          vp.Width /= x;
+          vp.X     += x_off;
+        }
+
+        if (config.render.map_mode == 2)
+          vp.Height *= x;
+      } else {
+        vp.Height *= x;
+      }
     } else {
       if (config.render.center_ui) {
         vp.Width /= x;
@@ -1131,6 +1338,14 @@ D3D9DrawIndexedPrimitive_Detour (IDirect3DDevice9* This,
       }
 
       vp.Y += ((float)viewport.Height - vp.Height / x) / 2.0f;
+    }
+
+    if (tracer.log_frame && config.trace.minimap) {
+      dll_log.Log ( L"   -> viewport (%lu,%lu %lux%lu) main_map=%d finished=%d shader_changes=%d target=%s",
+                      vp.X, vp.Y, vp.Width, vp.Height,
+                        (int)minimap->main_map, (int)minimap->finished,
+                          minimap->shader_changes,
+                            AD_ViewportIsScreen () ? L"screen" : L"offscreen" );
     }
 
     D3D9SetViewport_Original (This, &vp);
@@ -1209,6 +1424,63 @@ D3D9SetVertexShaderConstantF_Detour (IDirect3DDevice9* This,
                                                          Vector4fCount );
   }
 
+  AD_TracePostFXConst (L"VS", StartRegister, pConstantData, Vector4fCount);
+
+  // FIX (2026): acompanha a projecao ortografica da UI (c10 = 2/largura,
+  //   -2/altura, -1, 1) para saber em que espaco de coordenadas estamos.
+  //
+  //   So aceitamos projecoes cuja proporcao (largura/altura) e igual a da
+  //   tela (ex.: 1280x360 e 5120x1440 em 32:9) e com o viewport ocupando a
+  //   tela toda. Qualquer outra (render-to-texture etc.) volta ao padrao de
+  //   1280, que e o comportamento original do mod.
+  if ( StartRegister == 10 && Vector4fCount >= 1 &&
+       pConstantData [2] == -1.0f && pConstantData [3] == 1.0f ) {
+    ui.proj_width = 1280.0f;
+
+    if ( pConstantData [0] > 0.0f && pConstantData [1] < 0.0f &&
+         viewport.Height != 0 && ad::RenderFix::height != 0 ) {
+      float proj_w  = 2.0f /   pConstantData [0];
+      float proj_h  = 2.0f / (-pConstantData [1]);
+      float scr_ar  = (float)ad::RenderFix::width / (float)ad::RenderFix::height;
+      float vp_ar   = (float)viewport.Width       / (float)viewport.Height;
+
+      if ( fabsf ((proj_w / proj_h) - scr_ar) < 0.01f * scr_ar &&
+           fabsf (vp_ar             - scr_ar) < 0.01f * scr_ar &&
+           proj_w >= 640.0f && proj_w <= 8192.0f ) {
+        ui.proj_width = proj_w;
+      }
+    }
+
+    if (tracer.log_frame && config.trace.ui)
+      dll_log.Log (L" [Proj] c10 -> UI projection width = %f", ui.proj_width);
+
+    if (ui.c1_centered && ui.c1_proj != ui.proj_width && ui.widescreen) {
+      ui.c1_data [12] = ui.c1_base_x + config.scaling.hud_x_offset * (ui.proj_width / 1280.0f);
+      ui.c1_proj      = ui.proj_width;
+
+      D3D9SetVertexShaderConstantF_Original (This, 1, ui.c1_data, 4);
+
+      if (tracer.log_frame && config.trace.ui)
+        dll_log.Log (L" [Proj] re-sent c1 with x = %f", ui.c1_data [12]);
+    }
+  }
+
+  // Qualquer nova matriz c1 invalida o estado anterior
+  if (StartRegister == 1 && Vector4fCount == 4) {
+    ui.c1_transformed = false;
+    ui.c1_centered    = false;
+  }
+
+  // FIX (2026): elemento do minimapa desenhado na origem (0,0) sem escala.
+  //   No jogo original ele fica escondido no canto superior esquerdo; com a
+  //   correcao ele era arrastado para o meio da tela (o "pontinho").
+  if (StartRegister == 1 && Vector4fCount == 4) {
+    minimap->origin_prim =
+      minimap->drawing && (! minimap->main_map) &&
+      pConstantData [ 0] == 1.0f && pConstantData [ 5] == 1.0f &&
+      pConstantData [12] == 0.0f && pConstantData [13] == 0.0f;
+  }
+
 #if 0
   if (scissoring) {
     dll_log.Log ( L" SetVertexShaderConstantF (%x) - Start: %lu, Count: %lu",
@@ -1224,7 +1496,13 @@ D3D9SetVertexShaderConstantF_Detour (IDirect3DDevice9* This,
   //
   // Post-Processing Fix (e.g. DoF)
   //
-  if (ui.drawing && (float)viewport.Width / (float)viewport.Height > (16.0f / 9.0f) && postproc.fix_dof && StartRegister == 1 && Vector4fCount == 1 && pConstantData [2] == 0.0f && pConstantData [3] == 0.0f) {
+  // FIX (2026): condicao original mantida ("ui.drawing"). Em 2026 testamos
+  //   aplicar esta correcao tambem no cenario: o buffer do DoF que ela pega
+  //   (ex.: 640x360 em 5120x1440) ja e 16:9 de verdade, entao a "correcao"
+  //   so piorava o passo do desfoque. O defeito de DoF em ultrawide tem outra
+  //   origem (buffers auxiliares 16:9) e continua em aberto; contorno: no
+  //   config.ini do jogo, DofFilter=OFF e Stereo=TRUE.
+  if (ui.drawing && config.render.fix_dof && (float)viewport.Width / (float)viewport.Height > (16.0f / 9.0f) && postproc.fix_dof && StartRegister == 1 && Vector4fCount == 1 && pConstantData [2] == 0.0f && pConstantData [3] == 0.0f) {
     float inv_x         = 1.0f / pConstantData [0];
     float inv_y         = 1.0f / pConstantData [1];
     const float aspect  = 16.0f / 9.0f;
@@ -1244,7 +1522,16 @@ D3D9SetVertexShaderConstantF_Detour (IDirect3DDevice9* This,
       pFixedConstants [2] = 0.0f;
       pFixedConstants [3] = 0.0f;
 
-      //dll_log.Log (L" Y Before: %f, Y After: %f", inv_y, 1.0f / pFixedConstants [1]);
+      static bool dof_logged = false;
+      if (! dof_logged) {
+        dof_logged = true;
+        dll_log.Log ( L" [DoF] Depth of field correction active (pixel size 1/%.1f x 1/%.1f -> 1/%.1f x 1/%.1f)",
+                        inv_x, inv_y, inv_x, 1.0f / pFixedConstants [1] );
+      }
+
+      if (tracer.log_frame && (config.trace.ui || config.trace.minimap))
+        dll_log.Log ( L" [DoF] vs: %x ps: %x - pixel size 1/%.1f x 1/%.1f -> 1/%.1f x 1/%.1f",
+                        vs_checksum, ps_checksum, inv_x, inv_y, inv_x, 1.0f / pFixedConstants [1] );
 
       if (ui.widescreen)
         return D3D9SetVertexShaderConstantF_Original (This, StartRegister, pFixedConstants, Vector4fCount);
@@ -1286,6 +1573,17 @@ D3D9SetVertexShaderConstantF_Detour (IDirect3DDevice9* This,
       }
 
       minimap->drawing = true;
+
+      if (tracer.log_frame && config.trace.minimap) {
+        dll_log.Log ( L" [Minimap c2] (%u vec4) %f %f %f %f -> %f %f %f %f",
+                        Vector4fCount, pConstantData [0], pConstantData [1], pConstantData [2], pConstantData [3],
+                        pNotConstantData [0], pNotConstantData [1], pNotConstantData [2], pNotConstantData [3] );
+      }
+
+      // FIX (2026): o shader do minimapa tambem desenha o mapa grande.
+      //   Se o menu do mapa esta aberto, este desenho e o mapa grande.
+      if (minimap->isMapMenuActive ())
+        minimap->main_map = true;
 
       if (ui.widescreen)
         return D3D9SetVertexShaderConstantF_Original (This, StartRegister, pNotConstantData, Vector4fCount);
@@ -1332,7 +1630,7 @@ D3D9SetVertexShaderConstantF_Detour (IDirect3DDevice9* This,
       minimap->prim_zpos = pConstantData [14];
     }
 
-  if (ui.drawing && (! minimap->main_map) && config.render.aspect_correction && viewport.Width / viewport.Height == ad::RenderFix::width / ad::RenderFix::height && (StartRegister == 1/* || StartRegister == 9*/)) {
+  if (ui.drawing && ((! minimap->main_map) || config.render.map_mode >= 1) && config.render.aspect_correction && viewport.Width / viewport.Height == ad::RenderFix::width / ad::RenderFix::height && (StartRegister == 1/* || StartRegister == 9*/)) {
     //last_vs = 0x5c8f22bc && last_ps == 0xbf9778a
 
     //
@@ -1443,12 +1741,21 @@ D3D9SetVertexShaderConstantF_Detour (IDirect3DDevice9* This,
 
       // Map drawing is special, we will use a viewport to handle this,
       //   so do not mess with its X coordinate.
-      if (minimap->drawing) {
+      //
+      // FIX (2026): no MapMode=1 os elementos do mapa grande sao tratados
+      //   como o resto da UI (reduzidos e centralizados aqui mesmo).
+      if (minimap->drawing && (! (minimap->main_map && config.render.map_mode >= 1))) {
         ui.center = false;
       }
 
       // Background UI stuff
-      if (current_shader.ps == &ps_bg0 && (! ui.bg_filled)) {
+      //
+      // FIX (2026): no mapa grande (MapMode>=1) este shader tambem desenha
+      //   elementos do proprio mapa (ex.: o "X" dos marcadores); a regra de
+      //   "primeiro fundo translucido do quadro = fundo de menu esticado"
+      //   fazia o X do primeiro marcador sumir e alterava a tonalidade.
+      if ( current_shader.ps == &ps_bg0 && (! ui.bg_filled) &&
+           (! (minimap->main_map && config.render.map_mode >= 1)) ) {
         ui.center    = false;
         ui.bg_filled = true;
       }
@@ -1482,6 +1789,8 @@ D3D9SetVertexShaderConstantF_Detour (IDirect3DDevice9* This,
         dll_log.Log (L"           %% (%2.1f,%2.1f <> %2.1f, %2.1f {%2.1f}",                  pConstantData [2], pConstantData [3], pConstantData [6], pConstantData [7], pConstantData [15]);
         dll_log.Log (L" --> (%2.1f,%2.1f) {%2.1f,%2.1f}", x_ndc, y_ndc, x_off, y_off);
         dll_log.Log (L" UI Scale: (%2.1f,%2.1f)", x_scale, y_scale);
+        dll_log.Log (L" Proj width: %f, center=%d, x offset=%f", ui.proj_width, (int)ui.center,
+                       config.scaling.hud_x_offset * (ui.proj_width / 1280.0f));
 
         float xx, yy;
 
@@ -1519,7 +1828,8 @@ D3D9SetVertexShaderConstantF_Detour (IDirect3DDevice9* This,
           scale_trans [i+j] = scale [i] * trans [j] + scale [i+1] * trans [j+4] + scale [i+2] * trans [j+8] + scale [i+3] * trans [j+12];
 
       if (ui.center)
-        pNotConstantData [12] = ((x_ndc * (float)viewport.Width + (float)viewport.Width) / 2.0f) + config.scaling.hud_x_offset;
+        pNotConstantData [12] = ((x_ndc * (float)viewport.Width + (float)viewport.Width) / 2.0f) +
+                                  config.scaling.hud_x_offset * (ui.proj_width / 1280.0f); // FIX (2026)
 
       pNotConstantData [13] = scale_trans [13];
 
@@ -1539,7 +1849,14 @@ D3D9SetVertexShaderConstantF_Detour (IDirect3DDevice9* This,
           for (int j = 0; j < 4; j++)
             scaled [i+j] = scale2 [i] * orig [j] + scale2 [i+1] * orig [j+4] + scale2 [i+2] * orig [j+8] + scale2 [i+3] * orig [j+12];
 
-        if (minimap->drawing || ui.center)
+        // FIX (2026): a reducao da largura para elementos NAO centralizados
+        //   compensa o viewport reduzido do minimapa do HUD. No mapa grande
+        //   (MapMode>=1) nao existe esse viewport, e a reducao fazia camadas
+        //   de tela cheia cobrirem so metade da tela (faixa escura no mapa).
+        bool minimap_vp = minimap->drawing &&
+                          (! (minimap->main_map && config.render.map_mode >= 1));
+
+        if (minimap_vp || ui.center)
           pNotConstantData [0] = scaled [0];
 
         if (! ui.center)
@@ -1571,8 +1888,27 @@ D3D9SetVertexShaderConstantF_Detour (IDirect3DDevice9* This,
 
       ///////pNotConstantData [13] += ((float)viewport.Height - viewport.Height / x_scale) / 2.0f;
 
-      if (ui.widescreen)
+      if (ui.widescreen) {
+        // FIX (2026): guarda a matriz para um possivel reenvio (ver c10)
+        float base_x = ((x_ndc * (float)viewport.Width + (float)viewport.Width) / 2.0f);
+
+        ui.c1_transformed = true;
+
+        // FIX (2026): lembra onde a UI corrigida e desenhada (ver
+        //   AD_ViewportIsScreen). Elementos centralizados sao sempre da UI.
+        if (ui.center) {
+          void* rt = AD_GetCurrentRenderTarget ();
+          if (rt != nullptr)
+            ad_ui_render_target = rt;
+        }
+        ui.c1_centered    = ui.center &&
+          pNotConstantData [12] == base_x + config.scaling.hud_x_offset * (ui.proj_width / 1280.0f);
+        ui.c1_base_x      = base_x;
+        ui.c1_proj        = ui.proj_width;
+        memcpy (ui.c1_data, pNotConstantData, sizeof (float) * 16);
+
         return D3D9SetVertexShaderConstantF_Original (This, StartRegister, pNotConstantData, Vector4fCount);
+      }
     }
 
     //if (pConstantData [12] == 640.0 && pConstantData [13] == 420.0)
@@ -1607,6 +1943,8 @@ D3D9SetPixelShaderConstantF_Detour (IDirect3DDevice9* This,
                                                       pConstantData,
                                                         Vector4fCount );
   }
+
+  AD_TracePostFXConst (L"PS", StartRegister, pConstantData, Vector4fCount);
 
   if (ui.scissoring) {
 #if 0
@@ -1646,13 +1984,13 @@ D3D9SetPixelShaderConstantF_Detour (IDirect3DDevice9* This,
 
       if (memcmp ( &current_shader.ps->constants.vec4s [StartRegister].data [0],
                      pConstantData,
-                       sizeof (float) * 4 * min (Vector4fCount, dd_shader_s::MAX_VEC4S)) )
+                       sizeof (float) * 4 * (Vector4fCount < (UINT)dd_shader_s::MAX_VEC4S ? Vector4fCount : (UINT)dd_shader_s::MAX_VEC4S)) )
         dll_log.Log ( L"     * CHANGED values detected");
     }
 
     memcpy ( &current_shader.ps->constants.vec4s [StartRegister].data [0],
                pConstantData,
-                 sizeof (float) * 4 * min (Vector4fCount, dd_shader_s::MAX_VEC4S) );
+                 sizeof (float) * 4 * (Vector4fCount < (UINT)dd_shader_s::MAX_VEC4S ? Vector4fCount : (UINT)dd_shader_s::MAX_VEC4S) );
   }
 
   if (minimap->drawing) {
@@ -1742,7 +2080,7 @@ BMF_SetPresentParamsD3D9_Detour (IDirect3DDevice9*      device,
   ad::RenderFix::pDevice             = device;
 
   if (pparams != nullptr) {
-    memcpy (&present_params, pparams, sizeof D3DPRESENT_PARAMETERS);
+    memcpy (&present_params, pparams, sizeof (D3DPRESENT_PARAMETERS));
 
     dll_log.Log ( L" %% Caught D3D9 Swapchain :: Fullscreen=%s "
                   L" (%lux%lu@%lu Hz) "
@@ -1768,6 +2106,11 @@ BMF_SetPresentParamsD3D9_Detour (IDirect3DDevice9*      device,
     ad::RenderFix::width  = present_params.BackBufferWidth;
     ad::RenderFix::height = present_params.BackBufferHeight;
 
+    {
+      extern void AD_UpdateMapScreenHeight (void);
+      AD_UpdateMapScreenHeight ();
+    }
+
     //
     // Implicitly force a borderless window
     //
@@ -1783,7 +2126,7 @@ BMF_SetPresentParamsD3D9_Detour (IDirect3DDevice9*      device,
                             SWP_NOZORDER     | SWP_NOOWNERZORDER );
 
         DEVMODE devmode = { 0 };
-        devmode.dmSize = sizeof DEVMODE;
+        devmode.dmSize = sizeof (DEVMODE);
 
         EnumDisplaySettings (nullptr, ENUM_CURRENT_SETTINGS, &devmode);
 
@@ -1858,7 +2201,26 @@ BMF_SetPresentParamsD3D9_Detour (IDirect3DDevice9*      device,
         config.scaling.mouse_y_offset = 0.0f;
       }
 
-      xoff_auto = (xoff / x) / 2.0f;
+      // FIX (32:9): o valor automatico era calculado mas NUNCA aplicado,
+      //   e a formula antiga ((xoff / x) / 2) so dava certo com altura 1440.
+      //
+      //   O HUD vive num espaco virtual de 1280 unidades de largura (720p do
+      //   Xbox 360). Depois de encolhido por ar_scale, sobra uma faixa de
+      //   1280 / ar_scale e precisamos desloca-la para o centro:
+      //
+      //     offset = 640 * (1 - 1 / ar_scale)
+      //
+      //   Confere com os valores ajustados a mao pelo autor original:
+      //     3440x1440 -> 163.7 (autor: 164.12)   2880x900 -> 284.4 (autor: 285)
+      //     5120x1440 / 3840x1080 / 2560x720 -> 320.0
+      {
+        float ar_scale_auto = ar / (16.0f / 9.0f);
+
+        xoff_auto = (ar_scale_auto > 1.0f) ?
+                      640.0f * (1.0f - 1.0f / ar_scale_auto) : 0.0f;
+      }
+
+      config.scaling.hud_x_offset = xoff_auto;
 
       dll_log.Log ( L" <AutoCal> ( Mouse.YOffset=%11.6f", config.scaling.mouse_y_offset );
       dll_log.Log ( L"               HUD.XOffset=%11.6f ) { %s }", xoff_auto, aspect.c_str () );
@@ -1867,6 +2229,32 @@ BMF_SetPresentParamsD3D9_Detour (IDirect3DDevice9*      device,
                       config.scaling.mouse_y_offset );
       dll_log.Log ( L"               HUD.XOffset=%11.6f )",
                       config.scaling.hud_x_offset   );
+    }
+
+    // FIX (32:9): Deslocamento horizontal dos nomes / marcadores de missao.
+    //   O valor fixo 1.01 foi ajustado para 21:9. Interpolamos entre os
+    //   valores calibrados pelo autor original (16:9 -> 1.000,
+    //   21:9 -> 1.016, 16:3 -> 1.046). INI: [AgDrag.Nametags] ShiftCoeff
+    //   (0 = automatico).
+    {
+      extern float name_shift_coeff;
+
+      if (config.nametags.shift_coeff > 0.0f) {
+        name_shift_coeff = config.nametags.shift_coeff;
+      } else {
+        float ar_now = (float)pparams->BackBufferWidth /
+                       (float)pparams->BackBufferHeight;
+        float s      = ar_now / (16.0f / 9.0f);
+
+        if      (s <= 1.0f)    name_shift_coeff = 1.0f;
+        else if (s <= 1.3125f) name_shift_coeff = 1.0f   + (s - 1.0f)    * (0.016f / 0.3125f);
+        else if (s <= 3.0f)    name_shift_coeff = 1.016f + (s - 1.3125f) * (0.030f / 1.6875f);
+        else                   name_shift_coeff = 1.046f;
+      }
+
+      dll_log.Log ( L" [Nametags] ShiftCoeff=%9.6f, AspectCorrect=%s",
+                      name_shift_coeff,
+                        config.nametags.aspect_correct ? L"true" : L"false" );
     }
 
 #if 0

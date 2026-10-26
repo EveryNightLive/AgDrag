@@ -18,6 +18,11 @@
  *
  *   If not, see <http://www.gnu.org/licenses/>.
  *
+ *
+ * MODIFIED in 2026 by EveryNightLive (unofficial 32:9 update):
+ *   32:9 support, compatibility with the Dec/2017 DDDA.exe and recent
+ *   Special K versions, full map / menu / HUD fixes, build fixes.
+ *   Changes are marked with "FIX" comments. See README.md.
 **/
 
 #include "config.h"
@@ -25,7 +30,7 @@
 #include "ini.h"
 #include "log.h"
 
-std::wstring AD_VER_STR = L"0.2.0";
+std::wstring AD_VER_STR = L"0.2.1-32x9";
 
 static ad::INI::File*  dll_ini = nullptr;
 
@@ -36,6 +41,10 @@ ad::ParameterFactory g_ParameterFactory;
 struct {
   ad::ParameterBool*    aspect_correction;
   ad::ParameterBool*    center_ui;
+  ad::ParameterBool*    hook_map;
+  ad::ParameterInt*     map_mode;
+  ad::ParameterBool*    map_height_patch;
+  ad::ParameterBool*    fix_dof;
   ad::ParameterBool*    allow_background;
   ad::ParameterFloat*   foreground_fps;
   ad::ParameterFloat*   background_fps;
@@ -50,10 +59,17 @@ struct {
 
 struct {
   ad::ParameterInt*     always_on_top;
+  ad::ParameterFloat*   shift_coeff;
   ad::ParameterBool*    aspect_correct;
   ad::ParameterStringW* hold_on_top_key;
   ad::ParameterStringW* toggle_on_top_key;
 } nametags;
+
+struct {
+  ad::ParameterBool*    minimap;
+  ad::ParameterBool*    ui;
+  ad::ParameterBool*    postfx;
+} trace;
 
 struct {
   ad::ParameterBool*    block_left_alt;
@@ -96,6 +112,46 @@ AD_LoadConfig (std::wstring name) {
     dll_ini,
       L"AgDrag.Render",
         L"CenterUI" );
+
+  render.hook_map =
+    static_cast <ad::ParameterBool *>
+      (g_ParameterFactory.create_parameter <bool> (
+        L"Hook uGUIMap::draw (fixed address)")
+      );
+  render.hook_map->register_to_ini (
+    dll_ini,
+      L"AgDrag.Render",
+        L"HookMap" );
+
+  render.map_mode =
+    static_cast <ad::ParameterInt *>
+      (g_ParameterFactory.create_parameter <int> (
+        L"Full map mode (0 = native 32:9, 1 = centered 16:9, 2 = experimental)")
+      );
+  render.map_mode->register_to_ini (
+    dll_ini,
+      L"AgDrag.Render",
+        L"MapMode" );
+
+  render.map_height_patch =
+    static_cast <ad::ParameterBool *>
+      (g_ParameterFactory.create_parameter <bool> (
+        L"Full map uses a 16:9 screen height (MapMode=1)")
+      );
+  render.map_height_patch->register_to_ini (
+    dll_ini,
+      L"AgDrag.Render",
+        L"MapHeightPatch" );
+
+  render.fix_dof =
+    static_cast <ad::ParameterBool *>
+      (g_ParameterFactory.create_parameter <bool> (
+        L"Fix depth of field on wider than 16:9 screens")
+      );
+  render.fix_dof->register_to_ini (
+    dll_ini,
+      L"AgDrag.Render",
+        L"FixDOF" );
 
   render.allow_background =
     static_cast <ad::ParameterBool *>
@@ -189,6 +245,48 @@ AD_LoadConfig (std::wstring name) {
       L"AgDrag.Nametags",
         L"AlwaysOnTop" );
 
+  nametags.shift_coeff =
+    static_cast <ad::ParameterFloat *>
+      (g_ParameterFactory.create_parameter <float> (
+        L"Nametag Horizontal Shift (0 = Auto)")
+      );
+  nametags.shift_coeff->register_to_ini (
+    dll_ini,
+      L"AgDrag.Nametags",
+        L"ShiftCoeff" );
+
+
+  // Diagnostico: [AgDrag.Trace] - registra um quadro no log ao apertar
+  //   Ctrl+Shift+Alt+L
+  trace.minimap =
+    static_cast <ad::ParameterBool *>
+      (g_ParameterFactory.create_parameter <bool> (
+        L"Trace minimap draws")
+      );
+  trace.minimap->register_to_ini (
+    dll_ini,
+      L"AgDrag.Trace",
+        L"Minimap" );
+
+  trace.ui =
+    static_cast <ad::ParameterBool *>
+      (g_ParameterFactory.create_parameter <bool> (
+        L"Trace UI draws")
+      );
+  trace.ui->register_to_ini (
+    dll_ini,
+      L"AgDrag.Trace",
+        L"UI" );
+
+  trace.postfx =
+    static_cast <ad::ParameterBool *>
+      (g_ParameterFactory.create_parameter <bool> (
+        L"Trace post-processing draws")
+      );
+  trace.postfx->register_to_ini (
+    dll_ini,
+      L"AgDrag.Trace",
+        L"PostFX" );
 
   keyboard.block_left_alt =
     static_cast <ad::ParameterBool *>
@@ -241,6 +339,18 @@ AD_LoadConfig (std::wstring name) {
   if (render.center_ui->load ())
     config.render.center_ui = render.center_ui->get_value ();
 
+  if (render.hook_map->load ())
+    config.render.hook_map = render.hook_map->get_value ();
+
+  if (render.map_mode->load ())
+    config.render.map_mode = render.map_mode->get_value ();
+
+  if (render.map_height_patch->load ())
+    config.render.map_height_patch = render.map_height_patch->get_value ();
+
+  if (render.fix_dof->load ())
+    config.render.fix_dof = render.fix_dof->get_value ();
+
   if (render.allow_background->load ())
     config.render.allow_background = render.allow_background->get_value ();
 
@@ -270,6 +380,18 @@ AD_LoadConfig (std::wstring name) {
   if (nametags.always_on_top->load ())
     config.nametags.always_on_top = nametags.always_on_top->get_value ();
 
+  if (nametags.shift_coeff->load ())
+    config.nametags.shift_coeff = nametags.shift_coeff->get_value ();
+
+
+  if (trace.minimap->load ())
+    config.trace.minimap = trace.minimap->get_value ();
+
+  if (trace.ui->load ())
+    config.trace.ui = trace.ui->get_value ();
+
+  if (trace.postfx->load ())
+    config.trace.postfx = trace.postfx->get_value ();
 
   if (keyboard.block_left_alt->load ())
     config.keyboard.block_left_alt = keyboard.block_left_alt->get_value ();
@@ -297,6 +419,18 @@ AD_SaveConfig (std::wstring name, bool close_config) {
 
   render.center_ui->set_value         (config.render.center_ui);
   render.center_ui->store             ();
+
+  render.hook_map->set_value          (config.render.hook_map);
+  render.hook_map->store              ();
+
+  render.map_mode->set_value          (config.render.map_mode);
+  render.map_mode->store              ();
+
+  render.map_height_patch->set_value  (config.render.map_height_patch);
+  render.map_height_patch->store      ();
+
+  render.fix_dof->set_value           (config.render.fix_dof);
+  render.fix_dof->store               ();
 
   render.allow_background->set_value  (config.render.allow_background);
   render.allow_background->store      ();
@@ -329,6 +463,18 @@ AD_SaveConfig (std::wstring name, bool close_config) {
   nametags.always_on_top->set_value   (config.nametags.always_on_top);
   nametags.always_on_top->store       ();
 
+  nametags.shift_coeff->set_value     (config.nametags.shift_coeff);
+  nametags.shift_coeff->store         ();
+
+
+  trace.minimap->set_value            (config.trace.minimap);
+  trace.minimap->store                ();
+
+  trace.ui->set_value                 (config.trace.ui);
+  trace.ui->store                     ();
+
+  trace.postfx->set_value             (config.trace.postfx);
+  trace.postfx->store                 ();
 
   keyboard.block_left_alt->set_value  (config.keyboard.block_left_alt);
   keyboard.block_left_alt->store      ();
